@@ -50,6 +50,7 @@ def run_thought_pass(
     web_search_enabled: bool = True,
     max_tokens: int = 100,
     user_name: str = "Aditiya",  # ← nama user untuk konteks identitas
+    emotion_state: str = "",
 ) -> dict:
     # Isi template dengan nama user agar thought tahu siapa lawan bicaranya
     thought_system = _THOUGHT_SYSTEM_TEMPLATE.format(user_name=user_name)
@@ -63,11 +64,16 @@ def run_thought_pass(
     if recent_context:
         context_block = f"Konteks percakapan terkini:\n{recent_context}\n\n"
 
+    emotion_block = ""
+    if emotion_state:
+        emotion_block = f"State emosi pengguna saat ini:\n{emotion_state}\n\n"
+
     prompt = (
         f"{thought_system}\n\n"
         f"Hint memori: {mem_hint or '(kosong)'}\n"
         f"Web search: {'tersedia' if web_search_enabled else 'tidak tersedia'}\n\n"
         f"{context_block}"
+        f"{emotion_block}"
         f"Input {user_name}: \"{user_input}\"\n\n"
         f"NEED_SEARCH:"
     )
@@ -134,6 +140,7 @@ def build_augmented_system(
     thought: dict,
     memory_context: str,
     web_result: str = "",
+    emotion_guidance: str = "",
 ) -> str:
     parts = [base_system]
 
@@ -154,6 +161,9 @@ def build_augmented_system(
                 "[Instruksi Penting] Gunakan informasi dari web search di atas "
                 "sebagai dasar jawabanmu. Jangan mengabaikannya."
             )
+
+    if emotion_guidance:
+        parts.append(f"\n[Panduan Emosi]\n{emotion_guidance}")
 
     if thought.get("note"):
         parts.append(f"\n[Catatan]\n{thought['note']}")

@@ -19,6 +19,7 @@ from pathlib import Path
 from .token_budget import TokenBudget, TokenBudgetManager
 from .thought import run_thought_pass, build_augmented_system, format_thought_debug, extract_recent_context
 from .web_tools import search_and_summarize
+from .emotion_state import EmotionStateManager
 from utils.spinner import Spinner
 
 BASE_MODEL_PATH = "./model"
@@ -71,6 +72,7 @@ class ChatManager:
         self.hybrid_memory = None
         self.debug_thought = False
         self._user_name_cache: str = "Aditiya"  # di-set dari luar setelah nama diketahui
+        self.emotion_manager = EmotionStateManager()
 
     def _count_tokens_raw(self, messages: list) -> int:
         text = ""
@@ -112,9 +114,11 @@ class ChatManager:
             "recall_topic": "", "tone": "romantic", "note": "", "raw": ""
         }
 
-        if self.cfg.get("internal_thought_enabled", True):
-            recent_ctx = extract_recent_context(self.conversation_history, n=3)
+        recent_ctx = extract_recent_context(self.conversation_history, n=3)
+        emotion_state = self.emotion_manager.update(user_input, recent_context=recent_ctx)
+        emotion_guidance = self.emotion_manager.build_prompt_context()
 
+        if self.cfg.get("internal_thought_enabled", True):
             thought = run_thought_pass(
                 llm=self.llama,
                 user_input=user_input,
@@ -123,6 +127,12 @@ class ChatManager:
                 web_search_enabled=self.cfg.get("web_search_enabled", True),
                 max_tokens=100,
                 user_name=self._user_name_cache,
+                emotion_state=(
+                    f"emosi={emotion_state['user_emotion']}; "
+                    f"intensitas={emotion_state['intensity']}; "
+                    f"tren={emotion_state['trend']}; "
+                    f"durasi_turn={emotion_state['turns_in_state']}"
+                ),
             )
 
         # ── Ambil Memory Context — SEKALI, setelah recall_topic diketahui ──
@@ -161,6 +171,7 @@ class ChatManager:
         # ── Debug ─────────────────────────────────────────────────────────
         if self.debug_thought:
             print(format_thought_debug(thought, web_result=web_result))
+            print(f"[Emotion State] {emotion_state}")
 
         # ── Bangun System Prompt Augmented ────────────────────────────────
         augmented_system = build_augmented_system(
@@ -168,6 +179,7 @@ class ChatManager:
             thought=thought,
             memory_context=memory_ctx,
             web_result=web_result,
+            emotion_guidance=emotion_guidance,
         )
 
         system_msg = {"role": "system", "content": augmented_system}
