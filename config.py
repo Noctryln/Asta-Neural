@@ -11,10 +11,14 @@ DEFAULT_CONFIG = {
     "memory_mode": "hybrid",
     "web_search_enabled": True,
     "n_batch": 1024,
-    "tavily_api_key": "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",          # (1000/bulan) di https://app.tavily.com/
-    "serper_api_key": "",          # (2500/bulan) di https://serper.dev/
+    "tavily_api_key": "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",
+    "serper_api_key": "",
     "internal_thought_enabled": True,
     "use_dynamic_prompt": True,
+    # n_ctx khusus untuk model thought (3B) — lebih kecil agar hemat RAM
+    # thought hanya butuh ~300 token template + ~150 input + ~60 output = ~512 token
+    # 2048 memberi ruang cukup dengan margin aman
+    "thought_n_ctx": 512,
     "token_budget": {
         "total_ctx": 8192,
         "response_reserved": 512,
@@ -46,21 +50,18 @@ def setup_wizard(cfg: dict) -> dict:
     print("  ASTA — Setup Awal (hanya sekali)")
     print("="*50)
 
-    # Model
-    print("\nPilih model:")
+    print("\nPilih model response:")
     print("  1. Sailor2 3B (lebih ringan)")
-    print("  2. Sailor2 8B (lebih pintar)")
-    choice = input("Pilihan (default = 1): ").strip() or "1"
-    cfg["model_choice"] = choice if choice in ["1", "2"] else "1"
+    print("  2. Sailor2 8B (lebih pintar) [default]")
+    choice = input("Pilihan (default = 2): ").strip() or "2"
+    cfg["model_choice"] = choice if choice in ["1", "2"] else "2"
 
-    # Device
     print("\nPilih device:")
-    print("  1. CPU")
+    print("  1. CPU [default]")
     print("  2. GPU CUDA")
     dev = input("Pilihan (default = 1): ").strip()
     cfg["device"] = "gpu" if dev == "2" else "cpu"
 
-    # LoRA
     use_lora = input("\nGunakan LoRA adapter? (y/n, default = n): ").strip().lower()
     cfg["use_lora"] = use_lora == "y"
     if cfg["use_lora"]:
@@ -70,25 +71,30 @@ def setup_wizard(cfg: dict) -> dict:
         except ValueError:
             cfg["lora_n_gpu_layers"] = 0
 
-    # Web search
     ws = input("\nAktifkan web search? (y/n, default = y): ").strip().lower()
     cfg["web_search_enabled"] = ws != "n"
     if cfg["web_search_enabled"]:
         print("  Tavily API key (1000 query/bulan gratis, REKOMENDASI):")
-        print("  Daftar di https://app.tavily.com/")
         tavily_key = input("  Tavily API key (kosong = skip): ").strip()
         cfg["tavily_api_key"] = tavily_key
         if not tavily_key:
             print("  Serper API key (2500 query/bulan gratis, alternatif):")
-            print("  Daftar di https://serper.dev/")
             serper_key = input("  Serper API key (kosong = pakai DDG+Wikipedia saja): ").strip()
             cfg["serper_api_key"] = serper_key
 
-    # Internal thought
     it = input("Aktifkan internal thought? (y/n, default = y): ").strip().lower()
     cfg["internal_thought_enabled"] = it != "n"
 
+    if cfg["internal_thought_enabled"] and cfg["model_choice"] == "2":
+        print("\n[Info] Thought model akan menggunakan Sailor2 3B secara terpisah.")
+        print("  n_ctx untuk thought (default = 2048, lebih kecil = hemat RAM):")
+        try:
+            nc = input("  thought_n_ctx (default = 2048): ").strip()
+            cfg["thought_n_ctx"] = int(nc) if nc else 2048
+        except ValueError:
+            cfg["thought_n_ctx"] = 2048
+
     save_config(cfg)
     print("\n✓ Konfigurasi disimpan ke config.json")
-    print("  Untuk reset, hapus file config.json atau jalankan: python core.py --setup\n")
+    print("  Untuk reset: python core.py --setup\n")
     return cfg

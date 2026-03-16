@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 
 @dataclass
@@ -25,55 +25,73 @@ class TokenBudget:
 
 class TokenBudgetManager:
     def __init__(self, budget: TokenBudget, count_fn):
-        self.budget = budget
+        self.budget   = budget
         self.count_fn = count_fn
-
-    def _count_text(self, text: str) -> int:
-        return self.count_fn([{"role": "user", "content": text}])
 
     def build_messages(
         self,
         system_identity: Dict,
-        memory_messages: List[Dict],
+        memory_messages: List[Dict],      # tidak dipakai, dipertahankan compat
         conversation_history: List[Dict],
-    ) -> List[Dict]:
-        result = [system_identity]
+        dynamic_context: Optional[Dict] = None,
+    ) -> tuple:
+        """
+        Susun messages dengan urutan yang BENAR untuk memaksimalkan KV cache.
+
+        llama.cpp melakukan prefix-match secara LINEAR dari token pertama.
+        Begitu ada satu token berbeda, semua token setelahnya harus re-eval.
+
+        URUTAN OPTIMAL:
+          [0]   system_identity    ← konstan setiap turn → selalu cache hit
+          [1]   user_turn_1        ← konstan sejak turn 1 → cache hit ab turn 2
+          [2]   assistant_turn_1   ← konstan → cache hit
+          ...
+          [N-1] user_turn_N        ← turn ini (baru)
+          [N]   dynamic_context    ← TERAKHIR, tepat sebelum asisten menjawab
+                                     Berubah tiap turn tapi di akhir — tidak
+                                     memutus cache conversation di atasnya
+
+        Dengan urutan ini:
+          Turn 1: 0 cache hit (semua baru)
+          Turn 2: hit untuk [0]+[1]+[2] = system + turn1_user + turn1_assistant
+          Turn 3: hit untuk [0]+[1]+[2]+[3]+[4] = system + turn1 + turn2
+          ...dan seterusnya bertambah ~2 pesan per turn
+
+        CATATAN: conversation_history HARUS hanya berisi role:user dan role:assistant.
+        Jangan pernah menyimpan role:system di conversation_history.
+        """
+        # Hitung token system_identity dulu
         used_tokens = self.count_fn([system_identity])
-        memory_budget_left = self.budget.memory_budget
-        trimmed_memories = []
-        for mem_msg in memory_messages:
-            cost = self.count_fn([mem_msg])
-            if memory_budget_left - cost >= 0:
-                trimmed_memories.append(mem_msg)
-                memory_budget_left -= cost
-            else:
-                words = mem_msg["content"].split()
-                while words and memory_budget_left < 0:
-                    words = words[:-10]
-                    cost = self.count_fn([{"role": mem_msg["role"],
-                                           "content": " ".join(words)}])
-                    memory_budget_left = self.budget.memory_budget - cost
-                if words:
-                    trimmed_memories.append({
-                        "role": mem_msg["role"],
-                        "content": " ".join(words) + "..."
-                    })
-                break
 
-        result.extend(trimmed_memories)
-        used_tokens += self.count_fn(trimmed_memories) if trimmed_memories else 0
+        # Hitung token dynamic_context jika ada
+        dynamic_cost = 0
+        if dynamic_context:
+            dynamic_cost = self.count_fn([dynamic_context])
 
-        conv_budget = self.budget.available_total - used_tokens
-        selected_conv = []
-        for msg in reversed(conversation_history):
+        # Budget tersisa untuk conversation history
+        conv_budget = self.budget.available_total - used_tokens - dynamic_cost
+
+        # Filter: hanya user & assistant, bersih dari system
+        clean_history = [
+            m for m in conversation_history
+            if m.get("role") in ("user", "assistant") and m.get("content")
+        ]
+
+        # Ambil dari belakang sesuai budget
+        selected = []
+        for msg in reversed(clean_history):
             cost = self.count_fn([msg])
             if conv_budget - cost >= 0:
-                selected_conv.insert(0, msg)
+                selected.insert(0, msg)
                 conv_budget -= cost
             else:
                 break
 
-        result.extend(selected_conv)
+        # Susun: [system] + [conversation...] + [dynamic_context]
+        # dynamic_context DI AKHIR agar tidak memutus cache conversation
+        result = [system_identity] + selected
+        if dynamic_context:
+            result.append(dynamic_context)
 
         total = self.count_fn(result)
         return result, total
