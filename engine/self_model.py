@@ -14,6 +14,7 @@ Self-model ini dibaca di awal setiap sesi dan diperbarui saat:
 import json
 import threading
 import re
+import time
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -69,6 +70,8 @@ class SelfModel:
     def __init__(self, path: Path = SELF_MODEL_PATH):
         self._path = path
         self._lock = threading.Lock()
+        self._last_sync_save = 0.0
+        self._sync_interval_sec = 2.0
         self.data = self._load()
 
     # ── I/O ──────────────────────────────────────────────────────────────
@@ -110,9 +113,23 @@ class SelfModel:
         Sinkronkan state emosi Asta ke self_model.
         Dipanggil setiap turn setelah update_asta_emotion().
         """
+        do_save = False
+        now = time.monotonic()
         with self._lock:
-            self.data["emotional_state"].update(asta_emotion_dict)
-        self.save_async()
+            emo = self.data.setdefault("emotional_state", {})
+            tracked_keys = (
+                "current_emotion", "current_intensity", "mood", "mood_score",
+                "affection_level", "energy_level", "trigger", "updated_at",
+            )
+            changed = any(emo.get(k) != asta_emotion_dict.get(k) for k in tracked_keys)
+            emo.update(asta_emotion_dict)
+
+            if changed and (now - self._last_sync_save >= self._sync_interval_sec):
+                self._last_sync_save = now
+                do_save = True
+
+        if do_save:
+            self.save_async()
 
     def get_emotion(self) -> dict:
         return dict(self.data.get("emotional_state", {}))

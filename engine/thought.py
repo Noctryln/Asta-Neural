@@ -52,7 +52,11 @@ STEP3_MEMORY_TEMPLATE = (
     + "Topic: {topic}\n"
     + "Memori tersedia: {memory_hint}\n"
     + "Web search: {web_enabled}\n\n"
-    + "Apakah perlu recall memori atau search?\n"
+    + "Apakah perlu recall memori atau search? Output format:\n"
+    + "NEED_SEARCH: yes/no\n"
+    + "SEARCH_QUERY: <query relevan / ->\n"
+    + "RECALL_TOPIC: <topik recall / ->\n"
+    + "USE_MEMORY: yes/no\n"
     + "NEED_SEARCH:"
 )
 
@@ -68,6 +72,76 @@ STEP4_DECISION_TEMPLATE = (
 )
 
 _STOP = ["\n\n", "---", "###", "==="]
+
+_HEALTH_HINT_RE = re.compile(
+    r"\b(ga enak badan|gak enak badan|tidak enak badan|demam|pusing|batuk|flu|pilek|mual|sakit)\b",
+    re.IGNORECASE,
+)
+
+_EXPLICIT_SEARCH_RE = re.compile(
+    r"\b(cari(kan)?|search(kan)?|cek(kan)?|lihat(kan)?|googling|google-in)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_true_token(value: str) -> bool:
+    return value.strip().lower() in {
+        "yes", "ya", "true", "iya", "y", "1", "perlu", "butuh", "on", "ok",
+    }
+
+
+def _derive_search_query(user_input: str, topic: str = "") -> str:
+    text = user_input.strip()
+    # Bersihkan kata perintah agar query lebih relevan.
+    text = re.sub(r"\b(tolong|coba|please|dong|ya)\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(cari(kan)?|search(kan)?|cek(kan)?|lihat(kan)?|googling|google-in)\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(di\s+)?(web|internet|google)\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text).strip(" .,:;!?-\"")
+
+    # Jika hasil terlalu pendek, fallback ke topic lalu user_input asli.
+    if len(text) >= 6:
+        return text[:120]
+    if topic and len(topic.strip()) >= 4:
+        return topic.strip()[:120]
+    return user_input.strip()[:120]
+
+
+def _apply_search_fallback(user_input: str, step3: dict, web_enabled: bool, topic: str = "") -> dict:
+    """
+    Perkuat keputusan web-search saat output step-3 kosong/kurang tegas.
+    """
+    if not web_enabled:
+        step3["need_search"] = False
+        step3["search_query"] = ""
+        return step3
+
+    explicit_search = bool(_EXPLICIT_SEARCH_RE.search(user_input))
+
+    # User minta eksplisit mencari -> wajib search.
+    if explicit_search:
+        step3["need_search"] = True
+
+    # Heuristik health/symptom: dorong inisiatif cari referensi web.
+    if _HEALTH_HINT_RE.search(user_input):
+        step3["need_search"] = True
+
+    if step3.get("need_search"):
+        current_query = (step3.get("search_query") or "").strip(" \"'-.:")
+        if not current_query or current_query.lower() in {"-", "kosong", "none"}:
+            if _HEALTH_HINT_RE.search(user_input):
+                base_q = _derive_search_query(user_input, topic)
+                if base_q.lower().startswith("cara mengatasi"):
+                    step3["search_query"] = base_q[:120]
+                else:
+                    step3["search_query"] = f"cara mengatasi {base_q}"[:120]
+            else:
+                step3["search_query"] = _derive_search_query(user_input, topic)
+        elif explicit_search and len(current_query.split()) <= 1:
+            step3["search_query"] = _derive_search_query(user_input, topic)
+    else:
+        step3["search_query"] = ""
+
+    return step3
 
 
 # ─── Step Parsers ─────────────────────────────────────────────────────────────
@@ -95,7 +169,7 @@ def _parse_step2(raw: str) -> dict:
         v = v.strip()
         if k == "ASTA_EMOTION":    result["asta_emotion"]   = v.lower()
         elif k == "ASTA_TRIGGER":  result["asta_trigger"]   = v
-        elif k == "SHOULD_EXPRESS":result["should_express"] = v.lower() in ("yes", "ya", "true")
+        elif k == "SHOULD_EXPRESS":result["should_express"] = _is_true_token(v)
     return result
 
 def _parse_step3(raw: str) -> dict:
@@ -109,10 +183,10 @@ def _parse_step3(raw: str) -> dict:
         k, _, v = line.partition(":")
         k = k.strip().upper()
         v = v.strip()
-        if k == "NEED_SEARCH":    result["need_search"]  = v.lower() in ("yes", "ya", "true")
+        if k == "NEED_SEARCH":    result["need_search"]  = _is_true_token(v)
         elif k == "SEARCH_QUERY": result["search_query"] = v.strip('"\'')
         elif k == "RECALL_TOPIC": result["recall_topic"] = "" if v.lower() in ("kosong", "-", "") else v
-        elif k == "USE_MEMORY":   result["use_memory"]   = v.lower() in ("yes", "ya", "true")
+        elif k == "USE_MEMORY":   result["use_memory"]   = _is_true_token(v)
     return result
 
 def _parse_step4(raw: str) -> dict:
@@ -208,7 +282,9 @@ def run_thought_pass(
         recent_context=recent_context[:200] if recent_context else "(belum ada)",
         user_input=user_input[:150],
     )
-    raw1 = "TOPIC:" + _run_step(llm, prompt1, max_tokens=50, step_name="1-Perception")
+    step_budget = max(20, int(max_tokens))
+
+    raw1 = "TOPIC:" + _run_step(llm, prompt1, max_tokens=step_budget, step_name="1-Perception")
     s1 = _parse_step1(raw1)
 
     # ── Step 2: Self-check ────────────────────────────────────────────────
@@ -219,7 +295,7 @@ def run_thought_pass(
         topic=s1["topic"] or user_input[:50],
         sentiment=s1["sentiment"],
     )
-    raw2 = "ASTA_EMOTION:" + _run_step(llm, prompt2, max_tokens=50, step_name="2-SelfCheck")
+    raw2 = "ASTA_EMOTION:" + _run_step(llm, prompt2, max_tokens=step_budget, step_name="2-SelfCheck")
     s2 = _parse_step2(raw2)
 
     # ── Step 3: Memory & Search ───────────────────────────────────────────
@@ -228,8 +304,14 @@ def run_thought_pass(
         memory_hint=mem_hint,
         web_enabled="ya" if web_search_enabled else "tidak",
     )
-    raw3 = "NEED_SEARCH:" + _run_step(llm, prompt3, max_tokens=60, step_name="3-Memory")
+    raw3 = "NEED_SEARCH:" + _run_step(llm, prompt3, max_tokens=min(step_budget + 4, 56), step_name="3-Memory")
     s3 = _parse_step3(raw3)
+    s3 = _apply_search_fallback(
+        user_input=user_input,
+        step3=s3,
+        web_enabled=web_search_enabled,
+        topic=s1.get("topic", ""),
+    )
 
     # ── Step 4: Decision ──────────────────────────────────────────────────
     prompt4 = STEP4_DECISION_TEMPLATE.format(
@@ -241,7 +323,7 @@ def run_thought_pass(
         need_search="ya" if s3["need_search"] else "tidak",
         user_emotion=user_emotion,
     )
-    raw4 = "TONE:" + _run_step(llm, prompt4, max_tokens=60, step_name="4-Decision")
+    raw4 = "TONE:" + _run_step(llm, prompt4, max_tokens=min(step_budget + 4, 56), step_name="4-Decision")
     s4 = _parse_step4(raw4)
 
     # ── Gabungkan semua hasil ─────────────────────────────────────────────

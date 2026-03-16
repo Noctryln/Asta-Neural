@@ -3,6 +3,7 @@ api.py — FastAPI + WebSocket backend for Asta AI
 """
 
 import asyncio
+import concurrent.futures
 import json
 import threading
 
@@ -12,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 _chat_manager  = None
 _hybrid_memory = None
+_executor      = None
 _init_lock     = threading.Lock()
 _initialized   = False
 
@@ -52,8 +54,19 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
+    global _executor
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, _initialize)
+    if _executor is None:
+        _executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    global _executor
+    if _executor is not None:
+        _executor.shutdown(wait=False, cancel_futures=True)
+        _executor = None
 
 
 @app.get("/status")
@@ -215,9 +228,9 @@ async def websocket_chat(websocket: WebSocket):
                 now = datetime.datetime.now()
                 ts  = now.strftime("%A, %d %B %Y %H:%M WIB")
 
+                memory_ctx = cm._get_memory_context(query=user_input, recall_topic="")
                 recent_ctx = extract_recent_context(cm.conversation_history, n=2)
                 em_dict    = cm.emotion_manager.update(user_input, recent_context=recent_ctx)
-                memory_ctx = cm._get_memory_context(query=user_input, recall_topic="")
 
                 thought = {
                     "topic": "", "sentiment": "netral", "urgency": "normal",
@@ -231,7 +244,7 @@ async def websocket_chat(websocket: WebSocket):
                     thought = run_thought_pass(
                         llm=cm.llama_thought,
                         user_input=user_input,
-                        memory_context="",
+                        memory_context=memory_ctx,
                         recent_context=recent_ctx,
                         web_search_enabled=cm.cfg.get("web_search_enabled", True),
                         max_tokens=50,
@@ -256,7 +269,7 @@ async def websocket_chat(websocket: WebSocket):
 
                 # Supplemental recall
                 recall_topic = thought.get("recall_topic", "")
-                if recall_topic and cm.hybrid_memory and not memory_ctx:
+                if recall_topic and cm.hybrid_memory:
                     supplemental = cm.hybrid_memory.episodic.search_by_facts(recall_topic, top_k=1)
                     if supplemental:
                         s    = supplemental[0]
@@ -273,7 +286,8 @@ async def websocket_chat(websocket: WebSocket):
                                     if len(lines) >= 4:
                                         break
                         if lines:
-                            memory_ctx = f"[Ingatan: '{recall_topic}']\n" + "\n".join(lines)
+                            recall_block = f"[Ingatan: '{recall_topic}']\n" + "\n".join(lines)
+                            memory_ctx = f"{memory_ctx}\n\n{recall_block}" if memory_ctx else recall_block
 
                 web_result = ""
                 if (cm.cfg.get("web_search_enabled", True)
@@ -329,9 +343,7 @@ async def websocket_chat(websocket: WebSocket):
                 cm.conversation_history.append({"role": "assistant", "content": full_response})
                 loop.call_soon_threadsafe(chunk_queue.put_nowait, {"type": "done"})
 
-            import concurrent.futures
-            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-            future   = loop.run_in_executor(executor, _run_chat)
+            future = loop.run_in_executor(_executor, _run_chat)
 
             while True:
                 item = await chunk_queue.get()

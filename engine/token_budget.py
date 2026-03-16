@@ -60,38 +60,52 @@ class TokenBudgetManager:
         CATATAN: conversation_history HARUS hanya berisi role:user dan role:assistant.
         Jangan pernah menyimpan role:system di conversation_history.
         """
-        # Hitung token system_identity dulu
-        used_tokens = self.count_fn([system_identity])
-
-        # Hitung token dynamic_context jika ada
-        dynamic_cost = 0
-        if dynamic_context:
-            dynamic_cost = self.count_fn([dynamic_context])
-
-        # Budget tersisa untuk conversation history
-        conv_budget = self.budget.available_total - used_tokens - dynamic_cost
-
         # Filter: hanya user & assistant, bersih dari system
         clean_history = [
             m for m in conversation_history
             if m.get("role") in ("user", "assistant") and m.get("content")
         ]
 
-        # Ambil dari belakang sesuai budget
-        selected = []
-        for msg in reversed(clean_history):
-            cost = self.count_fn([msg])
-            if conv_budget - cost >= 0:
-                selected.insert(0, msg)
-                conv_budget -= cost
-            else:
-                break
+        # Strategi stabil untuk KV cache + relevansi:
+        # 1) Selalu pertahankan ekor percakapan (tail) agar konteks terbaru masuk.
+        # 2) Isi sisa budget dari awal percakapan (head) agar prefix tetap stabil.
+        # Dengan ini, perubahan dynamic_context tidak mudah menggeser awal prompt,
+        # sehingga prefix-match tidak mudah drop drastis.
+        max_prompt_tokens = self.budget.available_total
+        tail_keep = 4
+
+        def _build_prompt(msgs: List[Dict]) -> List[Dict]:
+            result = [system_identity] + msgs
+            if dynamic_context:
+                result.append(dynamic_context)
+            return result
+
+        # Pastikan message terbaru tetap ada.
+        tail = clean_history[-tail_keep:] if len(clean_history) > tail_keep else clean_history[:]
+        if self.count_fn(_build_prompt(tail)) > max_prompt_tokens:
+            # Fallback keras: tail terlalu besar, ambil secukupnya dari belakang.
+            selected = []
+            for msg in reversed(clean_history):
+                trial_selected = [msg] + selected
+                if self.count_fn(_build_prompt(trial_selected)) <= max_prompt_tokens:
+                    selected = trial_selected
+                else:
+                    break
+        else:
+            head_candidates = clean_history[:-len(tail)] if tail else clean_history
+            selected = tail[:]
+
+            # Isi dari depan agar prefix antar-turn stabil.
+            for msg in head_candidates:
+                trial_selected = selected[:-len(tail)] + [msg] + tail if tail else selected + [msg]
+                if self.count_fn(_build_prompt(trial_selected)) <= max_prompt_tokens:
+                    selected = trial_selected
+                else:
+                    break
 
         # Susun: [system] + [conversation...] + [dynamic_context]
         # dynamic_context DI AKHIR agar tidak memutus cache conversation
-        result = [system_identity] + selected
-        if dynamic_context:
-            result.append(dynamic_context)
+        result = _build_prompt(selected)
 
         total = self.count_fn(result)
         return result, total
