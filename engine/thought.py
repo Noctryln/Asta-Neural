@@ -15,7 +15,6 @@ _THOUGHT_SYSTEM_TEMPLATE = (
 
 _STOP_TOKENS = ["\n\n", "---", "</thought>", "###", "Input "]
 
-
 def run_thought_pass(
     llm,
     user_input: str,
@@ -46,8 +45,6 @@ def run_thought_pass(
     )
 
     try:
-        llm.reset()
-
         result = llm.create_completion(
             prompt=prompt,
             max_tokens=max_tokens,
@@ -57,14 +54,10 @@ def run_thought_pass(
             echo=False,
         )
         raw = "NEED_SEARCH:" + result["choices"][0]["text"].strip()
+
     except Exception as e:
         print(f"[Thought] Pass gagal: {e}")
         raw = ""
-    finally:
-        try:
-            llm.reset()
-        except Exception:
-            pass
 
     parsed = _parse_thought(raw)
     parsed["raw"] = raw

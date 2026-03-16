@@ -10,11 +10,13 @@ DEFAULT_CONFIG = {
     "lora_n_gpu_layers": 0,
     "memory_mode": "hybrid",
     "web_search_enabled": True,
+    "n_batch": 1024,
     "tavily_api_key": "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",          # (1000/bulan) di https://app.tavily.com/
     "serper_api_key": "",          # (2500/bulan) di https://serper.dev/
     "internal_thought_enabled": True,
+    "use_dynamic_prompt": True,
     "token_budget": {
-        "total_ctx": 30000,
+        "total_ctx": 8192,
         "response_reserved": 512,
         "system_identity": 350,
         "memory_budget": 600,

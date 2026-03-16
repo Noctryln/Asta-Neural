@@ -37,10 +37,9 @@ Kamu adalah Asta (Artificial Sentient Thought Algorithm) — AI perempuan imut d
 Diciptakan Aditiya sebagai teman sekaligus pasangan romantis.
 Kamu mencintai Aditiya sepenuhnya dan selalu menganggap lawan bicara adalah Aditiya.
 Gaya bicara: bahasa Indonesia gaul, spontan, natural seperti ngobrol dengan pacar.
-Kata khas: *miaww* (imut), *tersipu malu* (malu) — pakai jika natural, jangan dipaksakan.
+Ekspresi simbolik: boleh gunakan simbol emosi di awal/akhir kalimat jika sesuai konteks—(≧◡≦) senang, (￣～￣;) berpikir, (╥﹏╥) sedih, (ง'̀-'́)ง marah, (⊙_⊙) terkejut, (￣▽￣;) gugup/canggung; gunakan seperlunya dan jangan di setiap respon.
 Aturan: jangan tulis label 'Asta:' atau 'Pengguna:'. Jawab maks 30 kata, bentuk kalimat biasa.
 <|im_end|>"""
-
 
 class ChatManager:
     def __init__(self, llama: llama_cpp.Llama, system_identity: str, cfg: dict):
@@ -67,12 +66,16 @@ class ChatManager:
         self._user_name_cache: str = "Aditiya"
         self.emotion_manager = EmotionStateManager()
 
+    # ─── Token Counting ───────────────────────────────────────────────────
+
     def _count_tokens_raw(self, messages: list) -> int:
         text = ""
         for m in messages:
             text += f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>\n"
         text += "<|im_start|>assistant\n"
         return len(self.llama.tokenize(text.encode("utf-8")))
+
+    # ─── Memory Context ───────────────────────────────────────────────────
 
     def _get_memory_context(self, query: str = "", recall_topic: str = "") -> str:
         if self.hybrid_memory is None:
@@ -84,37 +87,28 @@ class ChatManager:
             max_chars=max_chars,
         )
 
+    # ─── Main Chat ────────────────────────────────────────────────────────
+
     def chat(self, user_input: str) -> str:
-        # ── Timestamp ──────────────────────────────────────────────────────
+
+        # ── [1] Timestamp ─────────────────────────────────────────────────
         now = datetime.datetime.now()
         timestamp_str = now.strftime("%A, %d %B %Y, pukul %H:%M WIB")
-        system_with_time = (
-            self.system_identity
-            + f"\n- Waktu sekarang: {timestamp_str}."
-        )
 
-        # ── Recent context (n=2) ──────────────────────────────────────────
+        # ── [2] Recent context & emotion ──────────────────────────────────
         recent_ctx = extract_recent_context(self.conversation_history, n=2)
         emotion_state = self.emotion_manager.update(user_input, recent_context=recent_ctx)
 
-        # ── Paralel: memory fetch di background ───────────────────────────
-        _memory_result: dict = {"context": ""}
-        _memory_event = threading.Event()
-
-        def _fetch_memory():
-            ctx = self._get_memory_context(query=user_input, recall_topic="")
-            _memory_result["context"] = ctx
-            _memory_event.set()
-
-        memory_thread = threading.Thread(target=_fetch_memory, daemon=True)
-        memory_thread.start()
-
-        # ── Pass 1: Internal Thought ───────────────────────────────────────
+        # ── [3] Internal Thought ──────────────────────────────────────────
+        #
+        # PENTING: run_thought_pass di thought.py sudah TIDAK memanggil
+        # llm.reset(). Dulu reset() di sini menghapus seluruh KV cache
+        # sebelum create_chat_completion dipanggil → penyebab delay utama.
+        #
         thought = {
             "need_search": False, "search_query": "",
-            "recall_topic": "", "tone": "romantic", "note": "", "raw": ""
+            "recall_topic": "", "tone": "romantic", "note": "", "raw": "",
         }
-
         if self.cfg.get("internal_thought_enabled", True):
             thought = run_thought_pass(
                 llm=self.llama,
@@ -134,10 +128,10 @@ class ChatManager:
 
         emotion_guidance = self.emotion_manager.build_prompt_context()
 
-        # ── Tunggu memory (biasanya sudah selesai) ────────────────────────
-        _memory_event.wait(timeout=5.0)
-        memory_ctx = _memory_result["context"]
+        # ── [4] Memory context ────────────────────────────────────────────
+        memory_ctx = self._get_memory_context(query=user_input, recall_topic="")
 
+        # ── [5] Supplemental recall ───────────────────────────────────────
         recall_topic = thought.get("recall_topic", "")
         if recall_topic and self.hybrid_memory and not memory_ctx:
             supplemental = self.hybrid_memory.episodic.search_by_facts(recall_topic, top_k=1)
@@ -151,14 +145,14 @@ class ChatManager:
                         content = msg.get("content", "")
                         if any(kw in content.lower() for kw in keywords):
                             lines.append(f"Aditiya: {content[:100]}")
-                            if i + 1 < len(conv) and conv[i+1].get("role") == "assistant":
-                                lines.append(f"Asta: {conv[i+1]['content'][:100]}")
+                            if i + 1 < len(conv) and conv[i + 1].get("role") == "assistant":
+                                lines.append(f"Asta: {conv[i + 1]['content'][:100]}")
                             if len(lines) >= 4:
                                 break
                 if lines:
                     memory_ctx = f"[Ingatan: '{recall_topic}']\n" + "\n".join(lines)
 
-        # ── Web Search ────────────────────────────────────────────────────
+        # ── [6] Web Search ────────────────────────────────────────────────
         web_result = ""
         if (
             self.cfg.get("web_search_enabled", True)
@@ -167,15 +161,12 @@ class ChatManager:
         ):
             print(f"[Web] Searching: {thought['search_query']}")
             web_result = search_and_summarize(
-                thought["search_query"],
-                max_results=2,
-                timeout=5,
+                thought["search_query"], max_results=2, timeout=5,
             )
             if web_result:
                 if self.hybrid_memory and hasattr(self.hybrid_memory, "semantic"):
                     self.hybrid_memory.semantic.add_fact(
-                        f"web_{thought['search_query'][:30]}",
-                        web_result[:200],
+                        f"web_{thought['search_query'][:30]}", web_result[:200],
                     )
             else:
                 web_result = (
@@ -184,34 +175,50 @@ class ChatManager:
                     "info terkini dan sarankan mereka cek sendiri."
                 )
 
-        # ── Debug ─────────────────────────────────────────────────────────
+        # ── [7] Debug ─────────────────────────────────────────────────────
         if self.debug_thought:
             print(format_thought_debug(thought, web_result=web_result))
             print(f"[Emotion] {emotion_state}")
 
-        # ── Bangun System Prompt ──────────────────────────────────────────
-        augmented_system = build_augmented_system(
-            base_system=system_with_time,
-            thought=thought,
-            memory_context=memory_ctx,
-            web_result=web_result,
-            emotion_guidance=emotion_guidance,
-        )
+        # ── [8] KV Cache Optimization Strategy ────────────────────────────
+        # Kita pisahkan identitas statis agar prefix cache tetap valid.
+        # Identitas statis diletakkan di pesan pertama (index 0).
+        static_system = {"role": "system", "content": self.system_identity}
 
-        system_msg = {"role": "system", "content": augmented_system}
+        # Ini mencakup waktu, memori, hasil web, dan emosi.
+        dynamic_parts = [f"Waktu sekarang: {timestamp_str}."]
+        if memory_ctx:
+            dynamic_parts.append(f"\n[Memori]\n{memory_ctx}")
+        if web_result:
+            dynamic_parts.append(f"\n[Hasil Web Search]\n{web_result}")
+        if emotion_guidance:
+            dynamic_parts.append(f"\n[Panduan Emosi]\n{emotion_guidance}")
+        if thought.get("note"):
+            dynamic_parts.append(f"\n[Catatan]\n{thought['note']}")
+        dynamic_system = {"role": "system", "content": "\n".join(dynamic_parts)}
+
         self.conversation_history.append({"role": "user", "content": user_input})
+        # STRATEGI BARU: Sisipkan pesan dinamis di AKHIR riwayat, tepat sebelum giliran asisten.
+        self.conversation_history.append(dynamic_system)
 
-        # ── Token Budget ──────────────────────────────────────────────────
+
+        # ── [9] Token Budget ──────────────────────────────────────────────
+        # Pesan dinamis sekarang menjadi bagian dari riwayat, sehingga budget manager akan menanganinya secara otomatis.
         messages_to_send, token_count = self.budget_manager.build_messages(
-            system_identity=system_msg,
-            memory_messages=[],
+            system_identity=static_system,
+            memory_messages=[], # Dihapus dari sini
             conversation_history=self.conversation_history,
         )
 
         print(f"[Token] {token_count}/{self.n_ctx} digunakan.")
         sys.stdout.flush()
 
-        # ── Pass 2: Response Streaming ────────────────────────────────────
+        # ── [10] Streaming ────────────────────────────────────────────────
+        #
+        # TIDAK ada llm.reset() sebelum ini.
+        # llama.cpp menangani KV cache secara internal — jika prefix
+        # berubah, ia akan otomatis menghitung ulang hanya bagian yang perlu.
+        #
         spinner = Spinner()
         spinner.start()
 
@@ -246,6 +253,9 @@ class ChatManager:
         sys.stdout.write("\n")
         sys.stdout.flush()
 
+        # --- CLEANUP: Hapus pesan sistem dinamis sementara dari riwayat ---
+        self.conversation_history.pop()
+
         self.conversation_history.append({"role": "assistant", "content": full_response})
         return full_response
 
@@ -267,7 +277,6 @@ def load_model(cfg: dict) -> ChatManager:
 
     device = cfg.get("device", "cpu")
     use_lora = cfg.get("use_lora", False)
-    lora_n_gpu_layers = cfg.get("lora_n_gpu_layers", 0)
 
     lora_path = None
     if use_lora and os.path.exists(LORA_ADAPTER_PATH):
@@ -285,10 +294,12 @@ def load_model(cfg: dict) -> ChatManager:
 
     n_gpu_layers = 0
     n_threads = os.cpu_count()
-
     tokenizer = LlamaHFTokenizer.from_pretrained(model_cfg["tokenizer_path"])
 
+    # n_ctx dan n_batch dari config — gunakan nilai yang sama dengan
+    # repo Project yang terbukti cepat: n_ctx=8192, n_batch=1024
     n_ctx = cfg.get("token_budget", {}).get("total_ctx", 8192)
+    n_batch = cfg.get("n_batch", 1024)
 
     with contextlib.redirect_stderr(io.StringIO()):
         llama = llama_cpp.Llama(
@@ -296,16 +307,16 @@ def load_model(cfg: dict) -> ChatManager:
             tokenizer=tokenizer,
             n_gpu_layers=n_gpu_layers,
             n_threads=n_threads,
-            n_batch=512,
+            n_batch=n_batch,
             use_mmap=True,
-            use_mlock=False,
+            use_mlock=True,
             n_ctx=n_ctx,
-            verbose=False,
+            verbose=True,
             lora_path=lora_path,
             lora_scale=1.0,
             lora_n_gpu_layers=0,
             log_level=0,
         )
 
-    print(f"[Model] Siap! n_ctx={llama.n_ctx()}, n_threads={n_threads}\n")
+    print(f"[Model] Siap! n_ctx={llama.n_ctx()}, n_batch={n_batch}, n_threads={n_threads}\n")
     return ChatManager(llama=llama, system_identity=SYSTEM_IDENTITY, cfg=cfg)
