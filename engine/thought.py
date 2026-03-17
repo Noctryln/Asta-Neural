@@ -496,10 +496,10 @@ def format_thought_debug(thought: dict, web_result: str = "") -> str:
         f"│  [S1] Topic     : {thought.get('topic','–')}",
         f"│       Sentiment : {thought.get('sentiment','–')} | Urgency: {thought.get('urgency','–')}",
         f"│  [S2] Asta Emosi: {thought.get('asta_emotion','–')} (trigger: {thought.get('asta_trigger','–')})",
-        f"│       Express   : {'ya' if thought.get('should_express') else 'tidak'}",
+        f"│       Express   : {'✓' if thought.get('should_express') else '✗'}",
         f"│  [S3] Search    : {'✓ ' + thought.get('search_query','') if thought.get('need_search') else '✗'}",
         f"│       Recall    : {thought.get('recall_topic') or '–'} (source: {thought.get('recall_source','none')})",
-        f"│       UseMemory : {'ya' if thought.get('use_memory') else 'tidak'}",
+        f"│       UseMemory : {'✓' if thought.get('use_memory') else '✗'}",
         f"│  [S4] Tone      : {thought.get('tone','–')} | Style: {thought.get('response_style','–')}",
         f"│       Note      : {thought.get('note') or '–'}",
     ]
