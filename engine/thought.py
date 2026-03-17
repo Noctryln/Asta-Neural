@@ -109,19 +109,60 @@ def _parse_step3(raw: str) -> dict:
         "use_memory":   False,
     }
     raw_clean = raw.split("Kamu adalah sistem analisis")[0].strip()
-    result["reasoning"] = raw_clean
-    
-    # 1. Parsing Standar (Key-Value)
+
+    # Ekstrak key-value dari semua baris (termasuk jika model menaruhnya di reasoning)
+    extracted_lines = []
     for line in raw_clean.splitlines():
-        if ":" not in line: continue
+        if ":" not in line:
+            continue
         k, _, v = line.partition(":")
-        k = k.strip().upper()
-        v = v.strip().lower().strip('"\'')
-        
-        if   k == "NEED_SEARCH":  result["need_search"]  = v in ("yes", "ya", "true", "1")
-        elif k == "SEARCH_QUERY": result["search_query"] = "" if v in ("-", "none", "", "tidak diperlukan") else v
-        elif k == "RECALL_TOPIC": result["recall_topic"] = "" if v in ("-", "none", "", "kosong") else v
-        elif k == "USE_MEMORY":   result["use_memory"]   = v in ("yes", "ya", "true", "1")
+        k_norm = k.strip().upper()
+        v_norm = v.strip().lower().strip('"\'')
+
+        if k_norm == "NEED_SEARCH":
+            result["need_search"] = v_norm in ("yes", "ya", "true", "1")
+            extracted_lines.append(line)
+        elif k_norm == "SEARCH_QUERY":
+            result["search_query"] = "" if v_norm in ("-", "none", "", "tidak diperlukan") else v.strip().strip('"\'')
+            extracted_lines.append(line)
+        elif k_norm == "RECALL_TOPIC":
+            result["recall_topic"] = "" if v_norm in ("-", "none", "", "kosong") else v.strip().strip('"\'')
+            extracted_lines.append(line)
+        elif k_norm == "USE_MEMORY":
+            result["use_memory"] = v_norm in ("yes", "ya", "true", "1")
+            extracted_lines.append(line)
+
+    # Simpan reasoning tanpa baris key-value supaya bersih
+    reasoning_lines = [ln for ln in raw_clean.splitlines() if ln not in extracted_lines]
+    result["reasoning"] = "\n".join(reasoning_lines).strip() or raw_clean
+
+
+    # Fallback ekstraksi inline (mis. "REASONING: ... NEED_SEARCH: yes")
+    if "NEED_SEARCH:" in raw_clean.upper():
+        m_need = re.search(r"NEED_SEARCH\s*:\s*([A-Za-z0-9_-]+)", raw_clean, flags=re.IGNORECASE)
+        if m_need:
+            v_need = m_need.group(1).strip().lower()
+            result["need_search"] = v_need in ("yes", "ya", "true", "1")
+
+    if not result["search_query"]:
+        m_query = re.search(r"SEARCH_QUERY\s*:\s*(.+)", raw_clean, flags=re.IGNORECASE)
+        if m_query:
+            v_query = m_query.group(1).split("\n", 1)[0].strip().strip('"\'')
+            if v_query.lower() not in ("-", "none", "", "tidak diperlukan"):
+                result["search_query"] = v_query
+
+    if not result["recall_topic"]:
+        m_recall = re.search(r"RECALL_TOPIC\s*:\s*(.+)", raw_clean, flags=re.IGNORECASE)
+        if m_recall:
+            v_recall = m_recall.group(1).split("\n", 1)[0].strip().strip('"\'')
+            if v_recall.lower() not in ("-", "none", "", "kosong"):
+                result["recall_topic"] = v_recall
+
+    if "USE_MEMORY:" in raw_clean.upper():
+        m_mem = re.search(r"USE_MEMORY\s*:\s*([A-Za-z0-9_-]+)", raw_clean, flags=re.IGNORECASE)
+        if m_mem:
+            v_mem = m_mem.group(1).strip().lower()
+            result["use_memory"] = v_mem in ("yes", "ya", "true", "1")
 
     # 2. Fuzzy Intent Detection (Jika label formal terlewat)
     lower_raw = raw_clean.lower()
@@ -146,6 +187,10 @@ def _parse_step3(raw: str) -> dict:
     if not result["recall_topic"] and not result["use_memory"]:
         if any(intent in lower_raw for intent in ["mengingat", "memori", "pernah dibahas", "flag point"]):
             result["use_memory"] = True
+
+    # Sinkronisasi akhir: jika recall_topic ada, wajib use_memory=yes
+    if result["recall_topic"]:
+        result["use_memory"] = True
             
     return result
 
