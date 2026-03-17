@@ -62,6 +62,11 @@ STEP3_MEMORY_TEMPLATE = (
     + "- User bertanya tentang fakta terkini: harga, cuaca, berita, jadwal\n"
     + "- User menyebut 'cari', 'cek', 'info', 'gimana caranya'\n"
     + "- Topic mengandung kebutuhan spesifik yang butuh pengetahuan eksternal\n\n"
+    + "Output WAJIB (4 baris):\n"
+    + "NEED_SEARCH: <yes/no>\n"
+    + "SEARCH_QUERY: <query singkat atau kosong>\n"
+    + "RECALL_TOPIC: <topik memori lama yang perlu diambil atau kosong>\n"
+    + "USE_MEMORY: <yes/no>\n"
     + "NEED_SEARCH:"
 )
 
