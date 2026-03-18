@@ -9,6 +9,7 @@
   "tavily_api_key": "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",
   "serper_api_key": "",
   "internal_thought_enabled": true,
+  "disable_step3_rule_based": true,
   "use_dynamic_prompt": true,
   "thought_n_ctx": 1024,
   "token_budget": {

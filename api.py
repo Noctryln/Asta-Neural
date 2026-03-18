@@ -1,7 +1,3 @@
-"""
-api.py — FastAPI + WebSocket backend for Asta AI
-"""
-
 import asyncio
 import json
 import threading
@@ -242,6 +238,7 @@ async def websocket_chat(websocket: WebSocket):
                             f"tren={em_dict['trend']}"
                         ),
                         asta_state=cm.emotion_manager.get_asta_dict(),
+                        cfg=cm.cfg,
                     )
                     em_dict = cm.emotion_manager.refine_with_thought(thought)
 
@@ -254,7 +251,6 @@ async def websocket_chat(websocket: WebSocket):
 
                 emotion_guidance = cm.emotion_manager.build_prompt_context()
 
-                # Supplemental recall
                 recall_topic = thought.get("recall_topic", "")
                 should_recall = bool(thought.get("use_memory") or recall_topic)
                 if should_recall and cm.hybrid_memory:
@@ -289,7 +285,8 @@ async def websocket_chat(websocket: WebSocket):
                     if not web_result:
                         web_result = "[INFO] Web search gagal."
 
-                # Build messages dengan strategi KV cache baru
+                thought["web_result"] = web_result
+
                 static_system   = {"role": "system", "content": cm.system_identity}
                 dynamic_context = cm._build_dynamic_context(
                     timestamp_str=ts,
@@ -299,7 +296,6 @@ async def websocket_chat(websocket: WebSocket):
                     thought_note=thought.get("note", ""),
                 )
 
-                # Tambah user input ke history (bersih)
                 cm.conversation_history.append({"role": "user", "content": user_input})
 
                 messages_to_send, _ = cm.budget_manager.build_messages(
@@ -356,6 +352,7 @@ async def websocket_chat(websocket: WebSocket):
                             "should_express": thought.get("should_express", False),
                             "need_search":    thought.get("need_search", False),
                             "search_query":   thought.get("search_query", ""),
+                            "web_result":     thought.get("web_result", ""),
                             "recall_topic":   thought.get("recall_topic", ""),
                             "use_memory":     thought.get("use_memory", False),
                             "recall_source":  thought.get("recall_source", "none"),

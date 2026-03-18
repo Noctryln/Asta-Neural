@@ -16,7 +16,10 @@ STEP1_PERCEPTION_TEMPLATE = (
     + "User={user_name} | Emosi user: {user_emotion} ({intensity})\n"
     + "Konteks terakhir:\n{recent_context}\n\n"
     + "Input: \"{user_input}\"\n\n"
-    + "Analisis singkat apa yang user butuhkan atau sampaikan:\n"
+    + "Analisis singkat:\n"
+    + "TOPIC: <topik utama>\n"
+    + "SENTIMENT: <positif/negatif/netral>\n"
+    + "URGENCY: <rendah/normal/tinggi>\n"
     + "TOPIC:"
 )
 
@@ -24,13 +27,16 @@ STEP2_SELFCHECK_TEMPLATE = (
     ASTA_THOUGHT_PREFIX
     + "=== STEP 2: SELF-CHECK ===\n"
     + "Kondisi Asta: mood={asta_mood}, affection={affection:.2f}, energy={energy:.2f}\n"
-    + "Nilai inti Asta: mencintai Aditiya, jujur, hadir sepenuhnya\n"
-    + "Topic dari step 1: {topic}\n"
-    + "Sentiment: {sentiment}\n\n"
+    + "Nilai inti: mencintai Aditiya, jujur, hadir sepenuhnya\n"
+    + "Topic: {topic} | Sentiment: {sentiment}\n\n"
+    + "CONTOH:\n"
+    + "Topic: merasa kecewa -> ASTA_EMOTION: kecewa, ASTA_TRIGGER: user tidak puas, SHOULD_EXPRESS: yes\n"
+    + "Topic: rindu -> ASTA_EMOTION: rindu, ASTA_TRIGGER: rasa kangen, SHOULD_EXPRESS: yes\n\n"
     + "Output WAJIB (3 baris):\n"
     + "ASTA_EMOTION: <netral/sedih/cemas/marah/senang/romantis/rindu/bangga/kecewa>\n"
-    + "ASTA_TRIGGER: <pemicu singkat emosi asta>\n"
+    + "ASTA_TRIGGER: <pemicu singkat>\n"
     + "SHOULD_EXPRESS: <yes/no>\n"
+    + "ASTA_EMOTION:"
 )
 
 STEP3_MEMORY_TEMPLATE = (
@@ -40,16 +46,35 @@ STEP3_MEMORY_TEMPLATE = (
     + "Topic: {topic}\n"
     + "Web search diizinkan: {web_enabled}\n"
     + "Memori tersedia (summary):\n{memory_hint}\n\n"
-    + "CONTOH:\n"
-    + "1. User: 'Harga emas hari ini?' -> REASONING: Butuh data harga terbaru. -> NEED_SEARCH: yes, SEARCH_QUERY: harga emas hari ini, RECALL_TOPIC: -, USE_MEMORY: no\n"
-    + "2. User: 'Flag point kita apa?' -> REASONING: Hal pribadi di masa lalu. -> NEED_SEARCH: no, SEARCH_QUERY: -, RECALL_TOPIC: flag point, USE_MEMORY: yes\n"
-    + "3. User: 'Hehe makasih' -> REASONING: Hanya reaksi santai. -> NEED_SEARCH: no, SEARCH_QUERY: -, RECALL_TOPIC: -, USE_MEMORY: no\n\n"
-    + "Output WAJIB (5 baris):\n"
-    + "REASONING: <analisis singkat>\n"
-    + "NEED_SEARCH: <yes/no>\n"
-    + "SEARCH_QUERY: <isi atau ->\n"
-    + "RECALL_TOPIC: <isi atau ->\n"
-    + "USE_MEMORY: <yes/no>\n"
+    + "CONTOH Output 1:\n"
+    + "User: 'Harga emas hari ini?'\n"
+    + "REASONING: Butuh data harga terbaru.\n"
+    + "NEED_SEARCH: yes\n"
+    + "SEARCH_QUERY: harga emas hari ini\n"
+    + "RECALL_TOPIC: -\n"
+    + "USE_MEMORY: no\n"
+    + "CONTOH Output 2:\n"
+    + "User: 'Gimana cara tau bumi itu bulat ya?'\n"
+    + "REASONING: Butuh informasi praktis.\n"
+    + "NEED_SEARCH: yes\n"
+    + "SEARCH_QUERY: cara tau bumi itu bulat\n"
+    + "RECALL_TOPIC: -\n"
+    + "USE_MEMORY: no\n"
+    + "CONTOH Output 3:\n"
+    + "User: 'Wahh bagus banget saranmu'\n"
+    + "REASONING: Hanya reaksi takjub atas saran.\n"
+    + "NEED_SEARCH: no\n"
+    + "SEARCH_QUERY: -\n"
+    + "RECALL_TOPIC: -\n"
+    + "USE_MEMORY: no\n"
+    + "CONTOH Output 4:\n"
+    + "User: 'Hehe makasih'\n"
+    + "REASONING: Hanya reaksi santai.\n"
+    + "NEED_SEARCH: no\n"
+    + "SEARCH_QUERY: -\n"
+    + "RECALL_TOPIC: -\n"
+    + "USE_MEMORY: no\n"
+
 )
 
 STEP4_DECISION_TEMPLATE = (
@@ -59,44 +84,50 @@ STEP4_DECISION_TEMPLATE = (
     + "Emosi Asta: {asta_emotion} | Mood: {asta_mood}\n"
     + "Recall: {recall_topic} | Search: {need_search}\n"
     + "User emotion: {user_emotion}\n\n"
+    + "CONTOH:\n"
+    + "Situasi: user sedih -> TONE: lembut, NOTE: Berikan kata-kata penyemangat, jangan menggurui, RESPONSE_STYLE: hangat\n"
+    + "Situasi: rindu -> TONE: romantic, NOTE: Balas dengan rindu yang sama, gunakan kata 'sayang', RESPONSE_STYLE: hangat\n\n"
     + "Output WAJIB (5 baris):\n"
     + "TONE: <romantic/emphatic/netral/tegas/lembut>\n"
-    + "NOTE: <1 catatan praktis dan singkat untuk respons>\n"
+    + "NOTE: <instruksi akting/gaya bicara untuk Asta>\n"
     + "RESPONSE_STYLE: <normal/singkat/hangat/tenang>\n"
     + "USER_EMOTION: <netral/sedih/cemas/marah/kecewa/senang/romantis/bangga/rindu>\n"
     + "EMOTION_CONFIDENCE: <rendah/sedang/tinggi>\n"
+    + "TONE:"
 )
 
-_STOP = ["\n\n", "---", "###", "==="]
+_STOP = ["STOP"]
 
 
 # ─── Step Parsers ─────────────────────────────────────────────────────────────
 
 def _parse_step1(raw: str) -> dict:
     result = {"topic": "", "sentiment": "netral", "urgency": "normal"}
-    for line in raw.strip().splitlines():
-        if ":" not in line:
-            continue
-        k, _, v = line.partition(":")
-        k = k.strip().upper()
-        v = v.strip()
-        if   k == "TOPIC":     result["topic"]     = v
-        elif k == "SENTIMENT": result["sentiment"] = v.lower()
-        elif k == "URGENCY":   result["urgency"]   = v.lower()
+    # Gunakan regex untuk menangkap label meskipun dalam satu baris (inline)
+    topic_match = re.search(r"TOPIC\s*:\s*([^|\n\r]+)", raw, re.IGNORECASE)
+    sent_match  = re.search(r"SENTIMENT\s*:\s*([^|\n\r]+)", raw, re.IGNORECASE)
+    urg_match   = re.search(r"URGENCY\s*:\s*([^|\n\r]+)", raw, re.IGNORECASE)
+
+    if topic_match: result["topic"] = topic_match.group(1).strip()
+    if sent_match:  result["sentiment"] = sent_match.group(1).lower().strip()
+    if urg_match:   result["urgency"] = urg_match.group(1).lower().strip()
     return result
 
 
 def _parse_step2(raw: str) -> dict:
     result = {"asta_emotion": "netral", "asta_trigger": "", "should_express": False}
-    for line in raw.strip().splitlines():
-        if ":" not in line:
-            continue
-        k, _, v = line.partition(":")
-        k = k.strip().upper()
-        v = v.strip()
-        if   k == "ASTA_EMOTION":    result["asta_emotion"]   = v.lower()
-        elif k == "ASTA_TRIGGER":    result["asta_trigger"]   = v
-        elif k == "SHOULD_EXPRESS":  result["should_express"] = v.lower() in ("yes", "ya", "true")
+    # Gunakan regex untuk mencari label meskipun model menulisnya berantakan
+    emotion_match = re.search(r"ASTA_EMOTION\s*:\s*(\w+)", raw, re.IGNORECASE)
+    trigger_match = re.search(r"ASTA_TRIGGER\s*:\s*([^\n\r]+)", raw, re.IGNORECASE)
+    express_match = re.search(r"SHOULD_EXPRESS\s*:\s*(yes|ya|true|no|tidak|false)", raw, re.IGNORECASE)
+
+    if emotion_match:
+        result["asta_emotion"] = emotion_match.group(1).lower().strip()
+    if trigger_match:
+        result["asta_trigger"] = trigger_match.group(1).strip()
+    if express_match:
+        result["should_express"] = express_match.group(1).lower() in ("yes", "ya", "true")
+        
     return result
 
 
@@ -108,67 +139,66 @@ def _parse_step3(raw: str) -> dict:
         "recall_topic": "",
         "use_memory":   False,
     }
-    raw_clean = raw.split("Kamu adalah sistem analisis")[0].strip()
-    result["reasoning"] = raw_clean
+    # Pembersihan: Ambil hanya blok pertama sebelum repetisi atau kata STOP
+    raw_first_block = raw.split("STOP")[0].split("===")[0].strip()
+    result["reasoning"] = raw_first_block
     
-    # 1. Parsing Standar (Key-Value)
-    for line in raw_clean.splitlines():
-        if ":" not in line: continue
+    # Gunakan baris demi baris tapi abaikan header/instruksi yang diulang
+    for line in raw_first_block.splitlines():
+        if ":" not in line:
+            continue
         k, _, v = line.partition(":")
         k = k.strip().upper()
         v = v.strip().lower().strip('"\'')
         
-        if   k == "NEED_SEARCH":  result["need_search"]  = v in ("yes", "ya", "true", "1")
-        elif k == "SEARCH_QUERY": result["search_query"] = "" if v in ("-", "none", "", "tidak diperlukan") else v
-        elif k == "RECALL_TOPIC": result["recall_topic"] = "" if v in ("-", "none", "", "kosong") else v
-        elif k == "USE_MEMORY":   result["use_memory"]   = v in ("yes", "ya", "true", "1")
+        # Mapping variabel
+        if   "REASONING" in k:    
+            if not result["reasoning"] or len(result["reasoning"]) < len(v):
+                result["reasoning"] = v
+        elif "NEED_SEARCH" in k:  result["need_search"] = "yes" in v or "ya" in v or "true" in v
+        elif "SEARCH_QUERY" in k: result["search_query"] = "" if v in ("-", "none", "", "tidak diperlukan") else v
+        elif "RECALL_TOPIC" in k: result["recall_topic"] = "" if v in ("-", "none", "", "kosong") else v
+        elif "USE_MEMORY" in k:   result["use_memory"]   = "yes" in v or "ya" in v or "true" in v
 
-    # 2. Fuzzy Intent Detection (Jika label formal terlewat)
-    lower_raw = raw_clean.lower()
-    if not result["need_search"]:
-        search_intents = ["akan melakukan pencarian", "perlu mencari", "butuh informasi dari web", "mencari informasi"]
-        if any(intent in lower_raw for intent in search_intents):
-            negations = ["tidak perlu", "tidak butuh", "bukan", "tanpa mencari"]
-            if not any(neg in lower_raw for neg in negations):
-                result["need_search"] = True
-
-    # 3. Smart Query Extraction (Jika NEED_SEARCH=True tapi SEARCH_QUERY kosong)
-    if result["need_search"] and not result["search_query"]:
-        # Coba ambil kalimat setelah kata "mencari informasi tentang" atau sejenisnya
-        for trigger in ["tentang", "mengenai", "informasi", "cari"]:
-            if f"{trigger} " in lower_raw:
-                extracted = lower_raw.split(f"{trigger} ")[-1].split(".")[0].split("\n")[0].strip()
-                if len(extracted) > 3:
-                    result["search_query"] = extracted
-                    break
-
-    # 4. Recall Intent Detection
-    if not result["recall_topic"] and not result["use_memory"]:
-        if any(intent in lower_raw for intent in ["mengingat", "memori", "pernah dibahas", "flag point"]):
-            result["use_memory"] = True
+    # Fallback: Jika label formal tidak ada tapi ada narasi niat (Fuzzy)
+    if not result["need_search"] and any(x in raw_first_block.lower() for x in ["perlu mencari", "cari di web", "pencarian web"]):
+        if "tidak perlu" not in raw_first_block.lower():
+            result["need_search"] = True
             
     return result
 
 
 def _parse_step4(raw: str) -> dict:
     result = {
-        "tone":               "romantic",
+        "tone":               "netral",
         "note":               "",
         "response_style":     "normal",
-        "user_emotion":       "",
+        "user_emotion":       "netral",
         "emotion_confidence": "sedang",
     }
-    for line in raw.strip().splitlines():
-        if ":" not in line:
-            continue
-        k, _, v = line.partition(":")
-        k = k.strip().upper()
-        v = v.strip()
-        if   k == "TONE":                result["tone"]               = v.lower()
-        elif k == "NOTE":                result["note"]               = v.strip('"\'')
-        elif k == "RESPONSE_STYLE":      result["response_style"]     = v.lower()
-        elif k == "USER_EMOTION":        result["user_emotion"]       = v.lower()
-        elif k == "EMOTION_CONFIDENCE":  result["emotion_confidence"] = v.lower()
+    # Regex untuk Step 4 agar lebih fleksibel menangkap label di manapun
+    patterns = {
+        "tone":               r"TONE\s*:\s*(\w+)",
+        "note":               r"NOTE\s*:\s*([^|\n\r]+)",
+        "response_style":     r"RESPONSE_STYLE\s*:\s*(\w+)",
+        "user_emotion":       r"USER_EMOTION\s*:\s*(\w+)",
+        "emotion_confidence": r"EMOTION_CONFIDENCE\s*:\s*(\w+)"
+    }
+    
+    for key, pattern in patterns.items():
+        match = re.search(pattern, raw, re.IGNORECASE)
+        if match:
+            val = match.group(1).strip()
+            if key == "tone":
+                # Validasi tone agar tidak muncul "user_confidence"
+                allowed = ["romantic", "emphatic", "netral", "tegas", "lembut", "romantis"]
+                result[key] = val.lower() if val.lower() in allowed else "netral"
+                if result[key] == "romantis": result[key] = "romantic"
+            elif key in ["response_style", "user_emotion", "emotion_confidence"]:
+                result[key] = val.lower()
+            else:
+                result[key] = val
+                
     return result
 
 
@@ -362,7 +392,7 @@ def run_thought_pass(
         recent_context=recent_context[:200] if recent_context else "(belum ada)",
         user_input=user_input[:150],
     )
-    raw1 = "TOPIC:" + _run_step(llm, prompt1, max_tokens=50, step_name="1-Perception")
+    raw1 = "TOPIC:" + _run_step(llm, prompt1, max_tokens=60, step_name="1-Perception")
     s1 = _parse_step1(raw1)
 
     # ── Step 2: Self-check ────────────────────────────────────────────────
@@ -373,12 +403,19 @@ def run_thought_pass(
         topic=s1["topic"] or user_input[:50],
         sentiment=s1["sentiment"],
     )
-    raw2 = "ASTA_EMOTION:" + _run_step(llm, prompt2, max_tokens=70, step_name="2-SelfCheck")
+    raw2 = "ASTA_EMOTION:" + _run_step(llm, prompt2, max_tokens=80, step_name="2-SelfCheck")
     s2 = _parse_step2(raw2)
     if not s2.get("asta_trigger"):
         s2["asta_trigger"] = (s1.get("topic") or user_input[:50]).strip()
-    if "SHOULD_EXPRESS" not in raw2.upper():
-        s2["should_express"] = s2.get("asta_emotion") in {"sedih", "cemas", "marah", "rindu", "romantis"}
+    
+    # Auto-expression jika emosi kuat
+    if not s2.get("should_express"):
+        # Tambahkan cemas ke daftar emosi yang harus diekspresikan
+        strong_emotions = {"romantis", "rindu", "marah", "sedih", "bangga", "kecewa", "cemas"}
+        if s2.get("asta_emotion") in strong_emotions:
+            s2["should_express"] = True
+        elif "SHOULD_EXPRESS" not in raw2.upper():
+            s2["should_express"] = s2.get("asta_emotion") in {"sedih", "cemas", "marah", "rindu", "romantis"}
 
     # ── Step 3: Memory & Search ───────────────────────────────────────────
     prompt3 = STEP3_MEMORY_TEMPLATE.format(
@@ -387,8 +424,16 @@ def run_thought_pass(
         memory_hint=mem_hint,
         web_enabled="ya" if web_search_enabled else "tidak",
     )
-    raw3 = "REASONING:" + _run_step(llm, prompt3, max_tokens=180, step_name="3-Memory")
+    raw3 = "REASONING:" + _run_step(llm, prompt3, max_tokens=150, step_name="3-Memory")
     s3 = _parse_step3(raw3)
+
+    # Filter Keamanan Search: Jangan cari tentang kegagalan diri sendiri ke web
+    if s3["need_search"]:
+        meta_keywords = ["jawaban", "kurang memuaskan", "asta", "ai", "maaf", "kecewa"]
+        if any(word in s3["search_query"].lower() for word in meta_keywords):
+            s3["need_search"] = False
+            s3["search_query"] = ""
+            print(f"[Thought] Search dibatalkan: Query meta/keluhan user '{s3['search_query']}'")
 
     # ── Fallback: keyword-based search trigger ────────────────────────────
     # Simpan status asli dari model untuk logging
@@ -451,7 +496,7 @@ def run_thought_pass(
     raw4 = "TONE:" + _run_step(
         llm,
         prompt4,
-        max_tokens=120,
+        max_tokens=150,
         step_name="4-Decision",
         stop=["---", "###", "==="],
     )
