@@ -43,38 +43,23 @@ STEP3_MEMORY_TEMPLATE = (
     ASTA_THOUGHT_PREFIX
     + "=== STEP 3: MEMORY & SEARCH ===\n"
     + "Input User: \"{user_input}\"\n"
-    + "Topic: {topic}\n"
+    + "Topic: {topic} | Sentiment: {sentiment}\n"
     + "Web search diizinkan: {web_enabled}\n"
     + "Memori tersedia (summary):\n{memory_hint}\n\n"
-    + "CONTOH Output 1:\n"
-    + "User: 'Harga emas hari ini?'\n"
-    + "REASONING: Butuh data harga terbaru.\n"
+    + "ATURAN:\n"
+    + "1. NEED_SEARCH: yes hanya jika jenis user meminta/merujuk informasi berjenis data, fakta, solusi teknis, penjelasan lebih lanjut, penanganan, kesehatan, rekomendasi, tata cara, tutorial.\n"
+    + "2. Jika NEED_SEARCH: no → SEARCH_QUERY = '-'.\n"
+    + "3. RECALL_TOPIC hanya jika user menyebut masa lalu atau merujuk ingatan secara langsung(kamu ingat gak kita pernah ke bali?, kamu tau gak kesukaan aku?).\n"
+    + "4. RECALL_TOPIC ada jika USE_MEMORY: yes\n"
+    + "5. USE_MEMORY: yes hanya jika RECALL_TOPIC ada.\n"
+    + "6. REASONING: kalimat singkat yang memutuskan NEED_SEARCH, SEARCH_QUERY, RECALL_TOPIC, USE_MEMORY.\n\n"
+    + "CONTOH Output:\n"
+    + "REASONING: Butuh data terbaru dari luar. maka perlu NEED_SEARCH dan isi SEARCH_QUERY, tidak perlu RECALL_TOPIC dan USE_MEMORY.\n"
     + "NEED_SEARCH: yes\n"
     + "SEARCH_QUERY: harga emas hari ini\n"
     + "RECALL_TOPIC: -\n"
     + "USE_MEMORY: no\n"
-    + "CONTOH Output 2:\n"
-    + "User: 'Gimana cara tau bumi itu bulat ya?'\n"
-    + "REASONING: Butuh informasi praktis.\n"
-    + "NEED_SEARCH: yes\n"
-    + "SEARCH_QUERY: cara tau bumi itu bulat\n"
-    + "RECALL_TOPIC: -\n"
-    + "USE_MEMORY: no\n"
-    + "CONTOH Output 3:\n"
-    + "User: 'Wahh bagus banget saranmu'\n"
-    + "REASONING: Hanya reaksi takjub atas saran.\n"
-    + "NEED_SEARCH: no\n"
-    + "SEARCH_QUERY: -\n"
-    + "RECALL_TOPIC: -\n"
-    + "USE_MEMORY: no\n"
-    + "CONTOH Output 4:\n"
-    + "User: 'Hehe makasih'\n"
-    + "REASONING: Hanya reaksi santai.\n"
-    + "NEED_SEARCH: no\n"
-    + "SEARCH_QUERY: -\n"
-    + "RECALL_TOPIC: -\n"
-    + "USE_MEMORY: no\n"
-
+    + "STOP\n\n"
 )
 
 STEP4_DECISION_TEMPLATE = (
@@ -96,7 +81,7 @@ STEP4_DECISION_TEMPLATE = (
     + "TONE:"
 )
 
-_STOP = ["STOP"]
+_STOP = []
 
 
 # ─── Step Parsers ─────────────────────────────────────────────────────────────
@@ -331,8 +316,9 @@ def _run_step(llm, prompt: str, max_tokens: int = 60, step_name: str = "", stop=
         result = llm.create_completion(
             prompt=prompt,
             max_tokens=max_tokens,
-            temperature=0.05,
-            top_p=0.9,
+            temperature=0.1,
+            top_p=0.8,
+            top_k=40,
             stop=stop or _STOP,
             echo=False,
         )
@@ -420,11 +406,12 @@ def run_thought_pass(
     # ── Step 3: Memory & Search ───────────────────────────────────────────
     prompt3 = STEP3_MEMORY_TEMPLATE.format(
         user_input=user_input,
+        sentiment=s1["sentiment"],
         topic=s1["topic"] or user_input[:50],
         memory_hint=mem_hint,
         web_enabled="ya" if web_search_enabled else "tidak",
     )
-    raw3 = "REASONING:" + _run_step(llm, prompt3, max_tokens=150, step_name="3-Memory")
+    raw3 = _run_step(llm, prompt3, max_tokens=150, step_name="3-Memory")
     s3 = _parse_step3(raw3)
 
     # Filter Keamanan Search: Jangan cari tentang kegagalan diri sendiri ke web
