@@ -175,6 +175,66 @@ async def trigger_reflection():
     return {"status": "done"}
 
 
+@app.websocket("/ws/terminal")
+async def terminal_socket(websocket: WebSocket):
+    await websocket.accept()
+    import os
+    import subprocess
+    import shlex
+
+    cwd = os.getcwd()
+
+    try:
+        while True:
+            cmd_raw = await websocket.receive_text()
+            if not cmd_raw.strip():
+                continue
+
+            # Handle 'cd' manually to maintain state
+            parts = shlex.split(cmd_raw)
+            if parts[0] in ("cls", "clear"):
+                await websocket.send_text("[CLEAR_SIGNAL]")
+                await websocket.send_text(f"> {cwd} $ ")
+                continue
+
+            if parts[0] == "cd":
+                if len(parts) > 1:
+                    new_path = os.path.abspath(os.path.join(cwd, parts[1]))
+                    if os.path.exists(new_path) and os.path.isdir(new_path):
+                        cwd = new_path
+                        await websocket.send_text(f"\n[CWD updated to: {cwd}]\n")
+                    else:
+                        await websocket.send_text(f"\nDirectory not found: {parts[1]}\n")
+                continue
+
+            try:
+                # Run command in CMD
+                process = subprocess.Popen(
+                    cmd_raw,
+                    shell=True,
+                    cwd=cwd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True
+                )
+
+                for line in process.stdout:
+                    await websocket.send_text(line)
+                
+                process.stdout.close()
+                return_code = process.wait()
+                
+                # Send prompt signal for frontend
+                await websocket.send_text(f"\n> {cwd} $ ")
+
+            except Exception as e:
+                await websocket.send_text(f"\nError: {str(e)}\n")
+
+    except WebSocketDisconnect:
+        pass
+
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
     await websocket.accept()
@@ -211,7 +271,9 @@ async def websocket_chat(websocket: WebSocket):
                 now = datetime.datetime.now()
                 ts  = now.strftime("%A, %d %B %Y %H:%M WIB")
 
-                memory_ctx = cm._get_memory_context(query=user_input, recall_topic="")
+                # [1] Memory Hint (RINGAN) untuk thought
+                memory_hint = cm._get_memory_hint(query=user_input)
+
                 recent_ctx = extract_recent_context(cm.conversation_history, n=2)
                 em_dict    = cm.emotion_manager.update(user_input, recent_context=recent_ctx)
 
@@ -227,10 +289,10 @@ async def websocket_chat(websocket: WebSocket):
                     thought = run_thought_pass(
                         llm=cm.llama_thought,
                         user_input=user_input,
-                        memory_context=memory_ctx,
+                        memory_context=memory_hint,
                         recent_context=recent_ctx,
                         web_search_enabled=cm.cfg.get("web_search_enabled", True),
-                        max_tokens=50,
+                        max_tokens=1024,
                         user_name=cm._user_name_cache,
                         emotion_state=(
                             f"emosi={em_dict['user_emotion']}; "
@@ -251,37 +313,21 @@ async def websocket_chat(websocket: WebSocket):
 
                 emotion_guidance = cm.emotion_manager.build_prompt_context()
 
-                recall_topic = thought.get("recall_topic", "")
-                should_recall = bool(thought.get("use_memory") or recall_topic)
-                if should_recall and cm.hybrid_memory:
-                    target_topic = (recall_topic or thought.get("topic") or user_input[:60]).strip()
-                    if target_topic and target_topic.lower() not in ("kosong", "-"):
-                        supplemental = cm.hybrid_memory.episodic.search_by_facts(target_topic, top_k=1)
-                        if supplemental:
-                            s    = supplemental[0]
-                            conv = s.get("conversation", [])
-                            kws  = [w for w in target_topic.lower().split() if len(w) > 2]
-                            lines = []
-                            for i, msg in enumerate(conv):
-                                if msg.get("role") == "user":
-                                    content = msg.get("content", "")
-                                    if any(kw in content.lower() for kw in kws):
-                                        lines.append(f"Aditiya: {content[:100]}")
-                                        if i+1 < len(conv) and conv[i+1].get("role") == "assistant":
-                                            lines.append(f"Asta: {conv[i+1]['content'][:100]}")
-                                        if len(lines) >= 4:
-                                            break
-                            if lines:
-                                recall_block = f"[Ingatan: '{target_topic}']\n" + "\n".join(lines)
-                                if recall_block not in memory_ctx:
-                                    memory_ctx = (f"{memory_ctx}\n\n{recall_block}".strip() if memory_ctx else recall_block)
-
+                # [2] Memory Context untuk Response Model (8B)
+                memory_ctx = cm._get_memory_context(query=user_input)
+                memory_ctx = cm._enrich_memory_context(memory_ctx, thought, user_input)
+                
                 web_result = ""
                 if (cm.cfg.get("web_search_enabled", True)
                         and thought["need_search"]
                         and thought.get("search_query")):
                     web_result = search_and_summarize(
                         thought["search_query"], max_results=2, timeout=5)
+                    if web_result and cm.hybrid_memory and getattr(cm.hybrid_memory, "semantic", None):
+                        cm.hybrid_memory.semantic.remember_web_result(
+                            thought["search_query"],
+                            web_result,
+                        )
                     if not web_result:
                         web_result = "[INFO] Web search gagal."
 

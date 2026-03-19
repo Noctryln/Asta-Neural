@@ -12,14 +12,14 @@
     ]
   },
   "emotional_state": {
-    "current_emotion": "romantis",
-    "current_intensity": "tinggi",
-    "mood": "sangat senang",
-    "mood_score": 1.0,
-    "affection_level": 0.9997,
-    "energy_level": 0.9661,
-    "trigger": "ucapan terima kasih atas saran",
-    "updated_at": "2026-03-19T02:21:39.504917"
+    "current_emotion": "netral",
+    "current_intensity": "rendah",
+    "mood": "netral",
+    "mood_score": -0.0392,
+    "affection_level": 0.9468,
+    "energy_level": 0.8788,
+    "trigger": "sapaan",
+    "updated_at": "2026-03-19T21:28:30.614766"
   },
   "preferences": {
     "suka": [

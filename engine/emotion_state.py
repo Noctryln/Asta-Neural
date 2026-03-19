@@ -60,50 +60,68 @@ class CombinedEmotionState:
 # ─── User Emotion Manager ─────────────────────────────────────────────────────
 
 class UserEmotionDetector:
+    # ─── 1. Pattern Definitions (Weighted) ────────────────────────────────────
+    # Format: "regex_pattern": weight (1=low, 2=medium, 3=high)
+    
     _PATTERNS = {
-        "sedih": [
-            r"\bsedih\b", r"\bkecewa\b", r"\bcapek\b", r"\blelah\b",
-            r"\bgalau\b", r"\bnangis\b", r"\bdown\b", r"\bterpuruk\b",
-            r"\bsakit hati\b", r"\bputus asa\b",
-        ],
-        "cemas": [
-            r"\bcemas\b", r"\bkhawatir\b", r"\btakut\b", r"\bpanik\b",
-            r"\bdeg-degan\b", r"\boverthinking\b", r"\bgelisah\b", r"\bstres\b",
-        ],
-        "marah": [
-            r"\bmarah\b", r"\bkesal\b", r"\bemosi\b", r"\bjengkel\b",
-            r"\bmuak\b", r"\bbenci\b", r"\bsebal\b", r"\bfrustasi\b",
-        ],
-        "senang": [
-            r"\bsenang\b", r"\bbahagia\b", r"\bgembira\b", r"\blega\b",
-            r"\bexcited\b", r"\bsemangat\b", r"\bsyukur\b", r"\bsuka\b",
-            r"\bhappy\b", r"\bwkwk\b", r"\bhaha\b", r"\blol\b",
-        ],
-        "romantis": [
-            r"\bkangen\b", r"\bsayang\b", r"\bcinta\b", r"\bpeluk\b",
-            r"\bcium\b", r"\bmanja\b", r"\brindu\b", r"\bkasih\b",
-        ],
-        "bangga": [
-            r"\bbangga\b", r"\bberhasil\b", r"\bsukses\b", r"\bprestasi\b",
-        ],
-        "kecewa": [
-            r"\bkecewa\b", r"\bmengecewakan\b", r"\bharapan\b.*\bgagal\b",
-        ],
+        "sedih": {
+            r"\b(sedih|murung|suram)\b": 2,
+            r"\b(nangis|menangis|air mata)\b": 3,
+            r"\b(hancur|remuk|sakit hati|perih hati)\b": 3,
+            r"\b(putus asa|nyerah|lelah hati|capek bgt|capek banget)\b": 3,
+            r"\b(kecewa|galau|bad mood|badmood)\b": 2,
+            r"\b(sendiri|sepi|kesepian)\b": 1,
+        },
+        "cemas": {
+            r"\b(takut|seram|ngeri|merinding)\b": 2,
+            r"\b(cemas|khawatir|gelisah|was-was)\b": 2,
+            r"\b(panik|stres|deg-degan|jantung)\b": 3,
+            r"\b(overthinking|kepikiran terus)\b": 2,
+            # Fisik (Urgent)
+            r"\b(sakit|nyeri|perih|luka|darah|pusing|mual|sesak)\b": 3,
+            r"\b(tolong|bantu|bahaya|darurat)\b": 2,
+        },
+        "marah": {
+            r"\b(marah|emosi|amuk)\b": 2,
+            r"\b(kesal|sebal|jengkel|bete|badmood)\b": 1,
+            r"\b(benci|muak|jijik|ilfil)\b": 3,
+            r"\b(bangsat|anjing|babi|goblok|tolol|bodoh|dungu|sialan)\b": 3,
+            r"\b(nyebelin|parah|keterlaluan)\b": 2,
+            r"\b(gak suka|tidak suka)\b": 1,
+        },
+        "senang": {
+            r"\b(senang|happy|bahagia|gembira)\b": 2,
+            r"\b(seru|asik|menarik|keren|mantap)\b": 2,
+            r"\b(lucu|kocak|ngakak|wkwk|haha|hihi|lol)\b": 2,
+            r"\b(semangat|excited|antusias)\b": 2,
+            r"\b(makasih|terima kasih|thanks|thank you)\b": 1, # Makasih = Senang ringan
+            r"\b(bersyukur|lega|plong)\b": 2,
+        },
+        "romantis": {
+            r"\b(cinta|love|sayang|kasih sayang)\b": 3, # "kasih" sendirian dihapus
+            r"\b(kangen|rindu|miss)\b": 3,
+            r"\b(peluk|cium|kiss|hug)\b": 2,
+            r"\b(manja|mesra|gombal)\b": 2,
+            r"\b(cantik|ganteng|cakep|manis)\b": 1, 
+            r"\b(jadian|pacar|pasangan|soulmate)\b": 2,
+        },
+        "bangga": {
+            r"\b(bangga|proud|hebat)\b": 3,
+            r"\b(berhasil|sukses|lulus|juara)\b": 2,
+            r"\b(pencapaian|prestasi)\b": 2,
+        },
+        "kecewa": {
+            r"\b(kecewa|mengecewakan)\b": 3,
+            r"\b(sayang banget|sayang sekali)\b": 1, # Konteks: "yah sayang banget tiket habis"
+            r"\b(gagal|kalah|rugi)\b": 2,
+        }
     }
 
-    _IMPROVED_PATTERNS = [
-        r"\baku\s*(udah|sudah)\s*(mendingan|lebih baik)\b",
-        r"\baku\s*lebih\s*tenang\b",
-        r"\bmakasih\s*udah\s*nenangin\b",
-        r"\baku\s*baik-baik\s*aja\b",
-    ]
+    _NEGATIONS = r"\b(tidak|gak|enggak|bukan|jangan|jan|ndak)\s+"
 
     _HOSTILE_TARGET_PATTERNS = [
         r"\b(kamu|lu|elo)\s+(bodoh|tolol|goblok|dungu|payah|nyebelin|jelek)\b",
         r"\b(bodoh|tolol|goblok|dungu|payah|nyebelin|jelek)\b.{0,12}\b(kamu|lu|elo|asta)\b",
-        r"\b(asta)\s+(bodoh|tolol|goblok|dungu|payah)\b",
-        r"\baku\s+marah\s+(banget\s+)?(sama|ke)\s+(kamu|asta)\b",
-        r"\b(nggak|gak|tidak)\s+sepintar\b",
     ]
 
     def __init__(self):
@@ -112,66 +130,106 @@ class UserEmotionDetector:
     def _score_emotions(self, text: str) -> dict:
         text_lower = text.lower().strip()
         scores = {k: 0 for k in self._PATTERNS}
+        
+        # 1. Cek Pola Dasar
         for emotion, patterns in self._PATTERNS.items():
-            for pattern in patterns:
-                scores[emotion] += len(re.findall(pattern, text_lower, re.IGNORECASE))
-        if text.endswith("!"):
-            scores["senang"] += 1
-        if "..." in text:
-            scores["sedih"] += 1
-            scores["cemas"] += 1
+            for pattern, weight in patterns.items():
+                matches = list(re.finditer(pattern, text_lower))
+                for match in matches:
+                    # Cek Negasi (Lookbehind manual sederhana)
+                    start_idx = match.start()
+                    preceding_text = text_lower[max(0, start_idx-10):start_idx]
+                    if re.search(self._NEGATIONS, preceding_text):
+                        continue # Skip jika ada negasi ("gak sedih")
+                    
+                    scores[emotion] += weight
+
+        # 2. Logika Khusus "Makasih" -> Netral/Senang (Bukan Romantis)
+        # Jika cuma bilang "makasih", jangan biarkan skor romantis naik
+        if re.search(r"\b(makasih|terima kasih|thanks)\b", text_lower):
+            # Jika tidak ada kata "sayang/cinta", pastikan romantis 0
+            if scores["romantis"] > 0:
+                is_romantic_explicit = re.search(r"\b(cinta|sayang|love|kangen|rindu)\b", text_lower)
+                if not is_romantic_explicit:
+                    scores["romantis"] = 0 
+
+        # 3. Logika Tanda Baca
+        # Tanda tanya (?) cenderung Netral atau Cemas (jika ada kata tanya)
+        if "?" in text:
+            pass 
+        # Tanda seru (!) meningkatkan skor emosi dominan, bukan membuat senang
+        if "!" in text:
+            # Cari emosi tertinggi saat ini
+            top_emo = max(scores, key=scores.get)
+            if scores[top_emo] > 0:
+                scores[top_emo] += 1
+
         return scores
 
     def _intensity_from_text(self, text: str, score: int) -> str:
-        if score >= 3 or re.search(r"\bbanget\b|\bbgt\b|\bparah\b|\bbener-bener\b", text, re.IGNORECASE):
+        # Deteksi Capslock (jika > 50% huruf besar dan panjang > 5)
+        caps_ratio = sum(1 for c in text if c.isupper()) / max(1, len(text))
+        is_caps = caps_ratio > 0.6 and len(text) > 5
+
+        # Kata penguat
+        intensifiers = re.search(r"\b(banget|bgt|parah|sangat|bener|sekali)\b", text, re.IGNORECASE)
+        
+        if score >= 4 or (score >= 2 and (is_caps or intensifiers)):
             return "tinggi"
-        if score >= 1:
+        if score >= 2:
             return "sedang"
         return "rendah"
 
     def update(self, user_text: str, recent_context: str = "") -> UserEmotionState:
-        combined = f"{recent_context}\n{user_text}".strip()
-        scores = self._score_emotions(combined)
+        # Analisis hanya pada teks terbaru untuk akurasi saat ini
+        scores = self._score_emotions(user_text)
 
+        # Hostility Check
         hostility_hits = sum(
             1 for p in self._HOSTILE_TARGET_PATTERNS
             if re.search(p, user_text, re.IGNORECASE)
         )
         if hostility_hits > 0:
-            scores["marah"] += 2 * hostility_hits
-            scores["kecewa"] += hostility_hits
+            scores["marah"] += 3 * hostility_hits
+            scores["kecewa"] += 2 * hostility_hits
 
+        # Tentukan Pemenang
         detected = "netral"
         top_score = 0
+        
         for emotion, score in scores.items():
             if score > top_score:
                 top_score = score
                 detected = emotion
-
-        prev = self.state.user_emotion
-        prev_neg = prev in {"sedih", "cemas", "marah", "kecewa"}
-        curr_neg = detected in {"sedih", "cemas", "marah", "kecewa"}
-
-        if any(re.search(p, user_text, re.IGNORECASE) for p in self._IMPROVED_PATTERNS):
-            trend = "membaik"
+        
+        # Ambang batas minimum: Jika skor terlalu kecil (<1), tetap Netral
+        # Kecuali 'makasih' (skor 1) bisa masuk ke senang/netral
+        if top_score < 1:
             detected = "netral"
-            top_score = 0
-        elif re.search(r"\b(bodoh|tolol|goblok|dungu|payah|nyebelin|jelek)\b", user_text, re.IGNORECASE) and prev in {"marah", "kecewa"}:
-            trend = "memburuk"
-            detected = prev
-            top_score = max(top_score, 2)
-        elif prev_neg and not curr_neg and detected != "netral":
-            trend = "membaik"
-        elif not prev_neg and curr_neg:
-            trend = "memburuk"
-        else:
+        elif top_score == 1 and detected == "senang":
+            # "Makasih" (skor 1) seringkali netral sopan
+            if len(user_text.split()) < 4: 
+                detected = "netral" # "Makasih ya" -> Netral
+            else:
+                detected = "senang" # "Makasih banget hadiahnya" -> Senang
+
+        # Hitung Tren & Intensitas
+        intensity = self._intensity_from_text(user_text, top_score)
+        
+        prev = self.state.user_emotion
+        if detected == prev:
+            turns = self.state.turns_in_state + 1
             trend = "stabil"
-
-        turns = self.state.turns_in_state + 1 if detected == prev else 1
-
-        intensity = self._intensity_from_text(combined, top_score + hostility_hits)
-        if hostility_hits > 0 and intensity == "rendah":
-            intensity = "sedang"
+        else:
+            turns = 1
+            # Logika trend sederhana
+            bad_emos = {"sedih", "cemas", "marah", "kecewa"}
+            if prev in bad_emos and detected not in bad_emos:
+                trend = "membaik"
+            elif prev not in bad_emos and detected in bad_emos:
+                trend = "memburuk"
+            else:
+                trend = "stabil"
 
         self.state = UserEmotionState(
             user_emotion=detected,

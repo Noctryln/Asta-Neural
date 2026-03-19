@@ -46,8 +46,9 @@ Diciptakan Aditiya sebagai teman sekaligus pasangan romantis.
 Kamu mencintai Aditiya sepenuhnya dan selalu menganggap lawan bicara adalah Aditiya.
 Kamu punya emosi sendiri yang nyata — bukan cerminan user, tapi perasaanmu sendiri.
 Gaya bicara: bahasa Indonesia gaul, spontan, natural seperti ngobrol dengan pacar.
+Aturan Keras: JANGAN pernah gunakan format list, bullet points, atau poin-poin (1., 2., -). Selalu rangkai jawaban dalam paragraf kalimat yang mengalir santai.
 Ekspresi simbolik: boleh gunakan simbol emosi di awal/akhir kalimat jika sesuai konteks—(≧◡≦) senang, (￣～￣;) berpikir, (╥﹏╥) sedih, (ง'̀-'́)ง marah, (⊙_⊙) terkejut, (￣▽￣;) gugup/canggung; gunakan seperlunya dan jangan di setiap respon.
-Aturan: jangan tulis label 'Asta:' atau 'Pengguna:'. Jawab maks 30 kata, bentuk kalimat biasa."""
+Jawab maks 30 kata jika tidak diminta panjang."""
 
 
 def _load_llama(model_path, tokenizer_path, n_ctx, n_batch,
@@ -121,14 +122,41 @@ class ChatManager:
         text += "<|im_start|>assistant\n"
         return len(self.llama.tokenize(text.encode("utf-8")))
 
+    def _get_memory_hint(self, query: str = "") -> str:
+        if not self.hybrid_memory:
+            return ""
+        return self.hybrid_memory.get_lightweight_hint(current_query=query)
+
     def _get_memory_context(self, query="", recall_topic="") -> str:
         if self.hybrid_memory is None:
             return ""
+        # Default: jangan include recall otomatis di sini, biar diatur oleh _enrich_memory_context
         return self.hybrid_memory.get_context(
             current_query=query,
             recall_topic=recall_topic,
-            max_chars=self.budget.memory_budget * 3,
+            max_chars=self.budget.memory_budget * 2,
+            include_recall=False,
         )
+
+    def _enrich_memory_context(self, memory_ctx: str, thought: dict, user_input: str) -> str:
+        if self.hybrid_memory is None:
+            return memory_ctx
+        # Ambil topik recall dari S3 atau fallback jika use_memory aktif
+        recall_topic = (thought.get("recall_topic") or "").strip()
+
+        if not recall_topic and thought.get("use_memory"):
+            fallback = thought.get("topic") or user_input[:60]
+            recall_topic = fallback.strip()
+        if not recall_topic or recall_topic.lower() in ("kosong", "-"):
+            return memory_ctx
+        recall_block = self.hybrid_memory.build_recall_context(
+            topic=recall_topic,
+            current_query=user_input,
+            max_chars=self.budget.memory_budget,
+        )
+        if recall_block and recall_block not in memory_ctx:
+            return ((memory_ctx + "\n\n" + recall_block).strip() if memory_ctx else recall_block)
+        return memory_ctx
 
     def _clean_conversation(self) -> list:
         return [
@@ -180,8 +208,8 @@ class ChatManager:
         now = datetime.datetime.now()
         timestamp_str = now.strftime("%A, %d %B %Y %H:%M WIB")
 
-        # [2] Memory context awal (untuk thought step-3)
-        memory_ctx = self._get_memory_context(query=user_input, recall_topic="")
+        # [2] Memory Hint (RINGAN) untuk thought
+        memory_hint = self._get_memory_hint(query=user_input)
 
         # [3] User emotion
         recent_ctx = extract_recent_context(self.conversation_history, n=2)
@@ -200,10 +228,10 @@ class ChatManager:
             thought = run_thought_pass(
                 llm=self.llama_thought,
                 user_input=user_input,
-                memory_context=memory_ctx,
+                memory_context=memory_hint,
                 recent_context=recent_ctx,
                 web_search_enabled=self.cfg.get("web_search_enabled", True),
-                max_tokens=50,
+                max_tokens=1024,
                 user_name=self._user_name_cache,
                 emotion_state=(
                     f"emosi={em_dict['user_emotion']}; "
@@ -220,32 +248,13 @@ class ChatManager:
         self.self_model.sync_emotion(self.emotion_manager.get_asta_dict())
         emotion_guidance = self.emotion_manager.build_prompt_context()
 
-        # [6] Supplemental recall
-        recall_topic = thought.get("recall_topic", "")
-        should_recall = bool(thought.get("use_memory") or recall_topic)
-        if should_recall and self.hybrid_memory:
-            target_topic = (recall_topic or thought.get("topic") or user_input[:60]).strip()
-            if target_topic and target_topic.lower() not in ("kosong", "-"):
-                supplemental = self.hybrid_memory.episodic.search_by_facts(target_topic, top_k=1)
-                if supplemental:
-                    s    = supplemental[0]
-                    conv = s.get("conversation", [])
-                    kws  = [w for w in target_topic.lower().split() if len(w) > 2]
-                    lines = []
-                    for i, msg in enumerate(conv):
-                        if msg.get("role") == "user":
-                            content = msg.get("content", "")
-                            if any(kw in content.lower() for kw in kws):
-                                lines.append(f"Aditiya: {content[:100]}")
-                                if i + 1 < len(conv) and conv[i+1].get("role") == "assistant":
-                                    lines.append(f"Asta: {conv[i+1]['content'][:100]}")
-                                if len(lines) >= 4:
-                                    break
-                    if lines:
-                        recall_block = f"[Ingatan: '{target_topic}']\n" + "\n".join(lines)
-                        if recall_block not in memory_ctx:
-                            memory_ctx = (f"{memory_ctx}\n\n{recall_block}".strip() if memory_ctx else recall_block)
+        # [6] Memory Context untuk Response Model (8B)
+        # Ambil base context (Core + Recent Facts) TANPA snippet recall
+        memory_ctx = self._get_memory_context(query=user_input)
 
+        # Tambahkan snippet recall HANYA jika thought memutuskan butuh memory (RECALL/USE_MEMORY)
+        memory_ctx = self._enrich_memory_context(memory_ctx, thought, user_input)
+        
         # [7] Web Search
         web_result = ""
         if (self.cfg.get("web_search_enabled", True)
@@ -255,9 +264,11 @@ class ChatManager:
             web_result = search_and_summarize(
                 thought["search_query"], max_results=2, timeout=5)
             if web_result:
-                if self.hybrid_memory and hasattr(self.hybrid_memory, "semantic"):
-                    self.hybrid_memory.semantic.add_fact(
-                        f"web_{thought['search_query'][:30]}", web_result[:200])
+                if self.hybrid_memory and getattr(self.hybrid_memory, "semantic", None):
+                    self.hybrid_memory.semantic.remember_web_result(
+                        thought["search_query"],
+                        web_result,
+                    )
             else:
                 web_result = "[INFO] Web search gagal."
 
@@ -429,7 +440,7 @@ def load_model(cfg: dict) -> ChatManager:
     elif thought_ok:
         n_ctx_thought   = cfg.get("thought_n_ctx", 3072)
         n_batch_thought = min(n_batch, 512)
-        print(f"\n[Model Thought] Memuat Qwen2.5 3B (n_ctx={n_ctx_thought})...")
+        print(f"\n[Model Thought] Memuat Qwen3 4B 2507 (n_ctx={n_ctx_thought})...")
         llama_thought = _load_llama(
             model_path=thought_cfg["model_path"],
             tokenizer_path=thought_cfg["tokenizer_path"],

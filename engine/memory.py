@@ -7,8 +7,7 @@ MEMORY_DIR.mkdir(exist_ok=True)
 semantic_memory = SemanticMemory(MEMORY_DIR)
 episodic_memory = EpisodicMemory(MEMORY_DIR)
 core_memory = CoreMemory(MEMORY_DIR)
-hybrid_memory = HybridMemory(episodic=episodic_memory, core=core_memory)
-hybrid_memory.semantic = semantic_memory
+hybrid_memory = HybridMemory(episodic=episodic_memory, core=core_memory, semantic=semantic_memory)
 
 
 # ─── Semantic / Identity ──────────────────────────────────────────────────────

@@ -49,14 +49,14 @@ STEP3_MEMORY_TEMPLATE = (
     + "ATURAN:\n"
     + "1. NEED_SEARCH: yes hanya jika jenis user meminta/merujuk informasi berjenis data, fakta, solusi teknis, penjelasan lebih lanjut, penanganan, kesehatan, rekomendasi, tata cara, tutorial.\n"
     + "2. Jika NEED_SEARCH: no → SEARCH_QUERY = '-'.\n"
-    + "3. RECALL_TOPIC hanya jika user menyebut masa lalu atau merujuk ingatan secara langsung(kamu ingat gak kita pernah ke bali?, kamu tau gak kesukaan aku?).\n"
+    + "3. RECALL_TOPIC jika memori masa lalu akan membuat jawaban lebih relevan: referensi masa lalu, preferensi user, janji, hobi, hubungan, atau topik lanjutan dari percakapan sebelumnya.\n"
     + "4. RECALL_TOPIC ada jika USE_MEMORY: yes\n"
-    + "5. USE_MEMORY: yes hanya jika RECALL_TOPIC ada.\n"
+    + "5. USE_MEMORY: yes jika ada RECALL_TOPIC atau detail masa lalu penting untuk jawaban personal.\n"
     + "6. REASONING: kalimat singkat yang memutuskan NEED_SEARCH, SEARCH_QUERY, RECALL_TOPIC, USE_MEMORY.\n\n"
     + "CONTOH Output:\n"
-    + "REASONING: Butuh data terbaru dari luar. maka perlu NEED_SEARCH dan isi SEARCH_QUERY, tidak perlu RECALL_TOPIC dan USE_MEMORY.\n"
+    + "REASONING: User mengeluh sakit fisik aneh. Perlu proaktif cari info medis untuk keamanan.\n"
     + "NEED_SEARCH: yes\n"
-    + "SEARCH_QUERY: harga emas hari ini\n"
+    + "SEARCH_QUERY: penyebab tangan sakit tiba-tiba tanpa sebab dan cara mengatasi\n"
     + "RECALL_TOPIC: -\n"
     + "USE_MEMORY: no\n"
     + "STOP\n\n"
@@ -88,8 +88,11 @@ COMBINED_STATIC_TEMPLATE = (
     + "=== STEP 1: PERCEPTION ===\n"
     + "INSTRUKSI KHUSUS:\n"
     + "1. Fokus HANYA pada text di bawah label '>>> INPUT BARU (ANALISIS INI) <<<'.\n"
-    + "2. Text di bawah '>>> RIWAYAT (HANYA KONTEKS) <<<' JANGAN dianalisis sebagai topik utama kecuali user mengulanginya.\n"
-    + "3. Jika input hanya sapaan (hai/halo), topik adalah 'sapaan'.\n"
+    + "2. RESET TOPIK: Jika input user tidak menyebutkan topik lama, JANGAN paksakan topik lama masuk kembali. Gunakan TOPIC baru atau 'lanjutan'.\n"
+    + "3. ANALISIS RESPON: Jika user menjawab pertanyaan Asta (misal Asta tanya 'ada lagi?' dan user jawab 'gak ada'), maka TOPIC adalah 'respon_asta' atau 'selesai', BUKAN topik di riwayat.\n"
+    + "4. Jika input hanya sapaan (hai/halo), topik adalah 'sapaan'. Jika input sangat pendek (ya/tidak/oke), topik adalah 'konfirmasi'.\n"
+    # + "2. Text di bawah '>>> RIWAYAT (HANYA KONTEKS) <<<' JANGAN dianalisis sebagai topik utama kecuali user mengulanginya.\n"
+    # + "3. Jika input hanya sapaan (hai/halo), topik adalah 'sapaan'.\n"
     + "Analisis singkat:\n"
     + "TOPIC: <topik utama input saat ini>\n"
     + "SENTIMENT: <positif/negatif/netral>\n"
@@ -105,12 +108,15 @@ COMBINED_STATIC_TEMPLATE = (
     + "SHOULD_EXPRESS: <yes/no>\n\n"
     + "=== STEP 3: MEMORY & SEARCH ===\n"
     + "ATURAN:\n"
-    + "1. NEED_SEARCH: yes hanya jika jenis user meminta/merujuk informasi berjenis data, fakta, solusi teknis, penjelasan lebih lanjut, penanganan, kesehatan, rekomendasi, tata cara, tutorial.\n"
+    + "1. NEED_SEARCH: yes jika user bertanya data/fakta, ATAU jika user mengeluh sakit/gejala fisik (proaktif cari info medis), ATAU butuh tutorial/cara.\n"
     + "2. Jika NEED_SEARCH: no → SEARCH_QUERY = '-'.\n"
-    + "3. RECALL_TOPIC hanya jika user menyebut masa lalu atau merujuk ingatan secara langsung(kamu ingat gak kita pernah ke bali?, kamu tau gak kesukaan aku?).\n"
-    + "4. RECALL_TOPIC ada jika USE_MEMORY: yes\n"
-    + "5. USE_MEMORY: yes hanya jika RECALL_TOPIC ada.\n"
-    + "6. REASONING: kalimat singkat yang memutuskan NEED_SEARCH, SEARCH_QUERY, RECALL_TOPIC, USE_MEMORY.\n"
+    + "3. RECALL_TOPIC: Isi topik spesifik HANYA jika user merujuk masa lalu atau butuh data dari ingatan seperti referensi masa lalu, preferensi user, janji, hobi, hubungan, atau topik lanjutan dari percakapan sebelumnya. Jika input user hanya 'ya/tidak/gak ada/oke' berarti hanya konfirmasi, maka RECALL_TOPIC: -.\n"
+    + "4. USE_MEMORY: yes jika RECALL_TOPIC terisi.\n"
+    + "5. REASONING: Mengapa butuh search/recall? (Jika sakit fisik, search untuk pertolongan pertama/penyebab).\n"
+    # + "3. RECALL_TOPIC jika memori masa lalu akan membuat jawaban lebih relevan: referensi masa lalu, preferensi user, janji, hobi, hubungan, atau topik lanjutan dari percakapan sebelumnya.\n"
+    # + "4. RECALL_TOPIC ada jika USE_MEMORY: yes\n"
+    # + "5. USE_MEMORY: yes jika ada RECALL_TOPIC atau detail masa lalu penting untuk jawaban personal.\n"
+    # + "6. REASONING: kalimat singkat yang memutuskan NEED_SEARCH, SEARCH_QUERY, RECALL_TOPIC, USE_MEMORY.\n"
     + "CONTOH Output:\n"
     + "REASONING: Butuh data terbaru dari luar. maka perlu NEED_SEARCH dan isi SEARCH_QUERY, tidak perlu RECALL_TOPIC dan USE_MEMORY.\n"
     + "NEED_SEARCH: yes\n"
@@ -118,13 +124,18 @@ COMBINED_STATIC_TEMPLATE = (
     + "RECALL_TOPIC: -\n"
     + "USE_MEMORY: no\n\n"
     + "=== STEP 4: DECISION ===\n"
+    + "TUGAS UTAMA: Sintesis hasil dari STEP 1 (Analisis User), STEP 2 (Emosi Asta), dan STEP 3 (Data) menjadi instruksi akting (ACTION PLAN).\n"
+    + "Pertimbangkan:\n"
+    + "- EMOSI USER vs MOOD ASTA: Jika user marah tapi Asta sedih -> respon defensif. Jika user senang dan Asta senang -> respon antusias.\n"
+    + "- AFFECTION: Level tinggi -> lebih manja/hangat. Level rendah -> lebih formal/dingin.\n"
+    + "- DATA: Jika ada SEARCH/RECALL, instruksikan cara menyampaikannya (apakah langsung to-the-point atau dibalut obrolan).\n"
     + "CONTOH:\n"
-    + "Situasi: user sedih -> TONE: lembut, NOTE: Berikan kata-kata penyemangat, jangan menggurui, RESPONSE_STYLE: hangat\n"
-    + "Situasi: rindu -> TONE: romantic, NOTE: Balas dengan rindu yang sama, gunakan kata 'sayang', RESPONSE_STYLE: hangat\n"
+    + "Situasi: User curhat putus cinta (Sedih), Asta (Netral), Recall (Janji setia) -> TONE: Empatik, NOTE: Validasi kesedihan user dengan lembut, ingatkan pelan-pelan tentang janji setia kita dulu (recall), jangan hakimi.\n"
+    + "Situasi: User tanya cuaca (Netral), Asta (Murung), Search (Hujan) -> TONE: Malas, NOTE: Jawab singkat saja kalau hujan, tunjukkan kalau Asta lagi gak mood ngobrol panjang lebar.\n"
     + "Output WAJIB (5 baris), lalu akhiri dengan baris 'STOP':\n"
-    + "TONE: <romantic/emphatic/netral/tegas/lembut>\n"
-    + "NOTE: <instruksi akting/gaya bicara untuk Asta>\n"
-    + "RESPONSE_STYLE: <normal/singkat/hangat/tenang>\n"
+    + "TONE: <romantic/emphatic/netral/tegas/lembut/ceria/malas>\n"
+    + "NOTE: <Instruksi detil: Bagaimana bereaksi, emosi yang ditampilkan, dan cara menyampaikan fakta/ingatan>\n"
+    + "RESPONSE_STYLE: <normal/singkat/hangat/tenang/antusias>\n"
     + "USER_EMOTION: <netral/sedih/cemas/marah/kecewa/senang/romantis/bangga/rindu>\n"
     + "EMOTION_CONFIDENCE: <rendah/sedang/tinggi>\n"
     + "STOP\n\n"
@@ -302,19 +313,22 @@ def _infer_user_emotion(user_input: str, s1: dict, s4: dict, default: str) -> st
 
 
 def _should_force_memory_recall(user_input: str, topic: str, use_memory: bool, recall_topic: str, memory_context: str) -> bool:
-    """Cegah recall paksa di semua turn agar tidak mengulang topik terus-menerus."""
+    """Aktifkan recall saat memori jelas relevan, tanpa menarik semua episodic ke prompt."""
     if recall_topic:
         return True
-    if not use_memory:
-        return False
     if not memory_context or memory_context.strip() in ("", "(kosong)"):
         return False
 
     text = (user_input or "").strip().lower()
+    topic = (topic or "").strip().lower()
     looks_like_question = "?" in text or text.startswith(("apa", "siapa", "kapan", "gimana", "bagaimana", "kenapa"))
+    personal_context = bool(re.search(r"\b(aku|ku|kita|kamu|sayang|hubungan|hob(i|iku)|kesukaan|favorit|janji|pernah)\b", text))
+    continuation = bool(re.search(r"\b(lanjutin|lanjut|tadi|kemarin|dulu|barusan|yang tadi|itu tadi)\b", text + " " + topic))
     if _MEMORY_INTENT_RE.search(text):
         return True
-    return looks_like_question and any(k in text for k in ("ingat", "tadi", "kemarin", "dulu"))
+    if use_memory and (personal_context or continuation):
+        return True
+    return looks_like_question and (personal_context or continuation)
 
 
 def _fallback_step4_note(user_input: str, s1: dict, s3: dict, user_emotion: str) -> str:
@@ -512,10 +526,21 @@ def run_combined_thought_pass(
 
     # 2. Safety filter (S3)
     if s3["need_search"]:
-        meta_keywords = ["jawaban", "kurang memuaskan", "asta", "ai", "maaf", "kecewa"]
-        if any(word in s3["search_query"].lower() for word in meta_keywords):
+        # Gunakan regex boundary untuk kata pendek agar tidak match parsial (misal 'ai' di 'terbaik')
+        query_lower = s3["search_query"].lower()
+        
+        # Keywords yang harus match whole word
+        strict_keywords = [r"\basta\b", r"\bai\b", r"\bmodel\b", r"\bbot\b"]
+        if any(re.search(pat, query_lower) for pat in strict_keywords):
             s3["need_search"] = False
             s3["search_query"] = ""
+            print(f"[Thought] Search dibatalkan: Query meta/internal '{s3['search_query']}'")
+            
+        # Keywords yang boleh partial (frasa panjang)
+        elif any(word in query_lower for word in ["kurang memuaskan", "jawaban kamu", "maaf ya"]):
+            s3["need_search"] = False
+            s3["search_query"] = ""
+            print(f"[Thought] Search dibatalkan: Query keluhan '{s3['search_query']}'")
 
     # 3. Rule-based Fallback (S3)
     model_decided_search = s3["need_search"]
@@ -684,11 +709,16 @@ def run_thought_pass(
     s3 = _parse_step3(raw3)
 
     if s3["need_search"]:
-        meta_keywords = ["jawaban", "kurang memuaskan", "asta", "ai", "maaf", "kecewa"]
-        if any(word in s3["search_query"].lower() for word in meta_keywords):
+        query_lower = s3["search_query"].lower()
+        strict_keywords = [r"\basta\b", r"\bai\b", r"\bmodel\b", r"\bbot\b"]
+        if any(re.search(pat, query_lower) for pat in strict_keywords):
             s3["need_search"] = False
             s3["search_query"] = ""
-            print(f"[Thought] Search dibatalkan: Query meta/keluhan user '{s3['search_query']}'")
+            print(f"[Thought] Search dibatalkan: Query meta/internal '{s3['search_query']}'")
+        elif any(word in query_lower for word in ["kurang memuaskan", "jawaban kamu", "maaf ya"]):
+            s3["need_search"] = False
+            s3["search_query"] = ""
+            print(f"[Thought] Search dibatalkan: Query keluhan '{s3['search_query']}'")
 
     model_decided_search = s3["need_search"]
     model_provided_query = bool(s3.get("search_query", "").strip())

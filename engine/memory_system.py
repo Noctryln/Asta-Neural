@@ -167,17 +167,106 @@ class BaseMemory:
 class SemanticMemory(BaseMemory):
     def __init__(self, directory: Path):
         super().__init__(directory / "semantic.json", default_content={})
+        self._normalize_schema()
+
+    def _normalize_schema(self):
+        changed = False
+        if not isinstance(self.data, dict):
+            self.data = {"facts": {}, "entries": []}
+            changed = True
+        else:
+            if "facts" not in self.data or not isinstance(self.data.get("facts"), dict):
+                legacy = {k: v for k, v in self.data.items() if not isinstance(v, list)}
+                self.data = {"facts": legacy, "entries": self.data.get("entries", [])}
+                changed = True
+            if "entries" not in self.data or not isinstance(self.data.get("entries"), list):
+                self.data["entries"] = []
+                changed = True
+        if changed:
+            self.save()
 
     def add_fact(self, key: str, value):
-        if self.data.get(key) != value:
-            self.data[key] = value
+        facts = self.data.setdefault("facts", {})
+        if facts.get(key) != value:
+            facts[key] = value
             self.save_async()
 
     def get_fact(self, key: str):
-        return self.data.get(key)
+        return self.data.get("facts", {}).get(key)
 
     def get_all_facts(self) -> dict:
-        return self.data.copy()
+        return self.data.get("facts", {}).copy()
+
+    def remember_web_result(self, query: str, summary: str):
+        query = (query or "").strip()
+        summary = (summary or "").strip()
+        if not query or not summary:
+            return
+        entries = self.data.setdefault("entries", [])
+        compact_summary = re.sub(r"\s+", " ", summary)[:320]
+        emb = create_embedding(f"{query}\n{compact_summary}").tolist()
+        entry = {
+            "kind": "web_search",
+            "query": query,
+            "summary": compact_summary,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "embedding": emb,
+        }
+        replaced = False
+        for idx in range(len(entries) - 1, -1, -1):
+            existing = entries[idx]
+            if existing.get("kind") == "web_search" and existing.get("query", "").lower() == query.lower():
+                entries[idx] = entry
+                replaced = True
+                break
+        if not replaced:
+            entries.append(entry)
+        if len(entries) > 80:
+            self.data["entries"] = entries[-80:]
+        self.save_async()
+
+    def search(self, query: str, top_k: int = 2, threshold: float = 0.18) -> list:
+        entries = self.data.get("entries", [])
+        if not query or not entries:
+            return []
+        q_emb = create_embedding(query)
+        scored = []
+        query_terms = {w for w in re.split(r"\W+", query.lower()) if len(w) > 2}
+        for entry in entries:
+            emb = entry.get("embedding", [])
+            if _is_zero_embedding(emb):
+                continue
+            sim = float(np.dot(q_emb, np.array(emb)))
+            text_blob = f"{entry.get('query', '')} {entry.get('summary', '')}".lower()
+            overlap = sum(1 for term in query_terms if term in text_blob)
+            score = sim + min(0.24, overlap * 0.04)
+            if score >= threshold:
+                scored.append((score, entry))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [entry for _, entry in scored[:top_k]]
+
+
+def _tokenize_topic(text: str) -> list:
+    return [w for w in re.split(r"\W+", (text or "").lower()) if len(w) > 2]
+
+
+def _clip_text(text: str, max_chars: int = 160) -> str:
+    clean = re.sub(r"\s+", " ", (text or "")).strip()
+    if len(clean) <= max_chars:
+        return clean
+    return clean[: max_chars - 3].rstrip() + "..."
+
+
+def _keyword_overlap_score(text: str, keywords: list, full_query: str = "") -> int:
+    hay = (text or "").lower()
+    score = 0
+    for kw in keywords:
+        if kw in hay:
+            score += 2
+    if full_query and full_query.lower() in hay:
+        score += 3
+    return score
+
 
 
 # ─── Episodic Memory ──────────────────────────────────────────────────────────
@@ -246,40 +335,75 @@ class EpisodicMemory(BaseMemory):
         if not self.data or not topic:
             return []
 
-        topic_lower = topic.lower()
-        keywords = [w for w in re.split(r'\W+', topic_lower) if len(w) > 2]
-
+        keywords = _tokenize_topic(topic)
         scored = []
+        q_emb = create_embedding(topic)
+
         for entry in self.data:
-            if _is_zero_embedding(entry.get("embedding", [])):
+            emb = entry.get("embedding", [])
+            if _is_zero_embedding(emb):
                 continue
 
-            score = 0
+            lexical_score = 0
+            lexical_score += _keyword_overlap_score(entry.get("llm_summary", ""), keywords, topic) * 2
             for kf in entry.get("key_facts", []):
-                fact_text = kf.get("fact", "").lower()
-                source_text = kf.get("source", "").lower()
-                for kw in keywords:
-                    if kw in fact_text:
-                        score += 3
-                    elif kw in source_text:
-                        score += 1
+                lexical_score += _keyword_overlap_score(kf.get("fact", ""), keywords, topic) * 3
+                lexical_score += _keyword_overlap_score(kf.get("source", ""), keywords)
 
             for msg in entry.get("conversation", []):
-                if msg.get("role") == "user":
-                    content = msg.get("content", "").lower()
-                    for kw in keywords:
-                        if kw in content:
-                            score += 2
+                lexical_score += _keyword_overlap_score(msg.get("content", ""), keywords)
 
-            if score > 0:
-                scored.append((score, entry))
+            semantic_score = float(np.dot(q_emb, np.array(emb)))
+            total_score = lexical_score + max(0.0, semantic_score) * 4.0
+            if lexical_score > 0 or semantic_score >= 0.22:
+                scored.append((total_score, entry))
 
         scored.sort(key=lambda x: x[0], reverse=True)
         results = [e for _, e in scored[:top_k]]
 
         if results:
-            print(f"[Episodic] Fact search '{topic[:40]}': {len(results)} hasil (skor: {[s for s,_ in scored[:top_k]]})")
+            print(f"[Episodic] Fact search '{topic[:40]}': {len(results)} hasil (skor: {[round(s, 2) for s,_ in scored[:top_k]]})")
         return results
+
+    def build_recall_snippets(self, topic: str, top_k: int = 2, max_lines: int = 6) -> list:
+        if not topic:
+            return []
+        entries = self.search_by_facts(topic, top_k=top_k)
+        keywords = _tokenize_topic(topic)
+        snippets = []
+        for entry in entries:
+            conv = entry.get("conversation", [])
+            lines = []
+            matched = False
+            for i, msg in enumerate(conv):
+                content = msg.get("content", "")
+                if not content:
+                    continue
+                score = _keyword_overlap_score(content, keywords, topic)
+                if msg.get("role") == "user" and score > 0:
+                    matched = True
+                    lines.append(f"User: {_clip_text(content, 120)}")
+                    if i + 1 < len(conv) and conv[i + 1].get("role") == "assistant":
+                        lines.append(f"Asta: {_clip_text(conv[i + 1].get('content', ''), 120)}")
+                elif matched and msg.get("role") == "assistant" and len(lines) < max_lines:
+                    lines.append(f"Asta: {_clip_text(content, 120)}")
+                if len(lines) >= max_lines:
+                    break
+
+            if not lines and entry.get("llm_summary"):
+                lines.append(f"Ringkasan: {_clip_text(entry['llm_summary'], 150)}")
+            if entry.get("key_facts"):
+                facts = [kf.get("fact", "") for kf in entry.get("key_facts", []) if kf.get("fact")]
+                if facts:
+                    lines.append("Fakta: " + "; ".join(_clip_text(f, 60) for f in facts[:2]))
+
+            if lines:
+                snippets.append({
+                    "timestamp": entry.get("timestamp", ""),
+                    "summary": _clip_text(entry.get("llm_summary", ""), 150),
+                    "lines": lines[:max_lines],
+                })
+        return snippets
 
     def get_last_n(self, n: int = 3) -> list:
         valid = [s for s in self.data if not _is_zero_embedding(s.get("embedding", []))]
@@ -362,21 +486,51 @@ class CoreMemory(BaseMemory):
 # ─── Hybrid Memory ────────────────────────────────────────────────────────────
 
 class HybridMemory:
-    def __init__(self, episodic: EpisodicMemory, core: CoreMemory):
+    def __init__(self, episodic: EpisodicMemory, core: CoreMemory, semantic: SemanticMemory = None):
         self.episodic = episodic
         self.core = core
+        self.semantic = semantic
+
+    def build_recall_context(self, topic: str = "", current_query: str = "", max_chars: int = 560) -> str:
+        focus = (topic or current_query or "").strip()
+        if not focus:
+            return ""
+        packets = []
+        for idx, item in enumerate(self.episodic.build_recall_snippets(focus, top_k=2), start=1):
+            header = f"[Recall {idx}]"
+            if item.get("summary"):
+                header += f" {item['summary']}"
+            packets.append(header + "\n" + "\n".join(item.get("lines", [])))
+        text = "\n\n".join(packets)
+        return _clip_text(text, max_chars) if text else ""
+
+    def get_lightweight_hint(self, current_query: str = "") -> str:
+        """Versi ringan untuk model thought agar tidak bloat."""
+
+        parts = []
+
+        # 1. Profil (ringkas)
+        if summary := self.core.get_summary():
+            parts.append(f"[Profil] {summary[:200]}")
+
+        # 2. Fakta terbaru (1 sesi, max 3 fakta)
+        if facts := self.episodic.get_recent_facts_text(n_sessions=1, max_facts=3):
+            parts.append(f"[Fakta Baru] {facts}")
+
+        return "\n".join(parts) or "(kosong)"
 
     def get_context(
         self,
         current_query: str = "",
         recall_topic: str = "",
         max_chars: int = 1200,
+        include_recall: bool = True,
     ) -> str:
         parts = []
 
         memory_intent = bool(re.search(
             r"\b(ingat|ingetin|ingatan|inget|flag\s*point\w*|kemarin|dulu|tadi|apa\s+tadi|apa\s+yang\s+aku\s+bilang|"
-            r"kamu\s+ingat|siapa\s+namaku|nama\s+aku)\b",
+            r"kamu\s+ingat|siapa\s+namaku|nama\s+aku|kesukaan\s+aku|hobiku|hobi\s+aku)\b",
             (current_query or ""),
             re.IGNORECASE,
         ))
@@ -385,54 +539,46 @@ class HybridMemory:
         if core_text:
             parts.append(f"[Memori Inti]\n{core_text}")
 
-        facts_text = self.episodic.get_recent_facts_text(n_sessions=3, max_facts=8)
+        facts_text = self.episodic.get_recent_facts_text(n_sessions=3, max_facts=5)
         if facts_text:
-            parts.append(f"[Fakta Terbaru]\n{facts_text}")
+            parts.append(f"[Fakta Penting]\n{facts_text}")
 
-        recall_used = False
-        if recall_topic and recall_topic.strip().lower() not in ("", "kosong", "-"):
-            recalled = self.episodic.search_by_facts(recall_topic, top_k=2)
-            for r in recalled:
-                relevant_lines = []
-                conv = r.get("conversation", [])
-                keywords = [w for w in recall_topic.lower().split() if len(w) > 2]
+        focus = recall_topic if recall_topic and recall_topic.strip().lower() not in ("", "kosong", "-") else ""
+        if not focus and memory_intent:
+            focus = current_query
 
-                for i, msg in enumerate(conv):
-                    if msg.get("role") == "user":
-                        content = msg.get("content", "")
-                        if any(kw in content.lower() for kw in keywords):
-                            relevant_lines.append(f"Aditiya: {content[:120]}")
-                            # Ambil respons Asta berikutnya
-                            if i + 1 < len(conv) and conv[i + 1].get("role") == "assistant":
-                                relevant_lines.append(f"Asta: {conv[i + 1]['content'][:120]}")
-                            if len(relevant_lines) >= 4:
-                                break
+        # RECALL: hanya aktif jika dipicu (include_recall)
+        if include_recall:
+            focus = ""
 
-                if relevant_lines:
-                    parts.append(
-                        f"[Ingatan: '{recall_topic}']\n" + "\n".join(relevant_lines)
-                    )
-                    recall_used = True
-                    break
+            # Prioritas 1: recall_topic valid
+            if recall_topic and recall_topic.strip().lower() not in {"", "kosong", "-"}:
+                focus = recall_topic.strip()
 
-        if not recall_used and current_query and memory_intent:
-            recalled = self.episodic.search(current_query, top_k=1, threshold=0.10)
-            for r in recalled:
-                if r.get("llm_summary"):
-                    parts.append(f"[Memori Relevan]\n{r['llm_summary']}")
-                    break
-                conv = r.get("conversation", [])
-                for i, msg in enumerate(conv):
-                    if msg.get("role") == "user" and msg.get("content"):
-                        snippet = [f"Aditiya: {msg['content'][:140]}"]
-                        if i + 1 < len(conv) and conv[i + 1].get("role") == "assistant":
-                            snippet.append(f"Asta: {conv[i + 1].get('content', '')[:140]}")
-                        parts.append("[Memori Relevan]\n" + "\n".join(snippet))
-                        break
-                if parts and parts[-1].startswith("[Memori Relevan]"):
-                    break
+            # Prioritas 2: intent kuat → pakai current_query
+            elif memory_intent:
+                focus = current_query
 
-        full_text = "\n\n".join(parts)
+            if focus:
+                recall_text = self.build_recall_context(
+                    topic=focus,
+                    current_query=current_query,
+                    max_chars=max(220, max_chars // 2),
+                )
+
+                if recall_text:
+                    parts.append(recall_text)
+
+        if self.semantic and current_query:
+            semantic_hits = self.semantic.search(current_query, top_k=1)
+            if semantic_hits:
+                hit = semantic_hits[0]
+                parts.append(
+                    f"[Memori Web] Query lama: {_clip_text(hit.get('query', ''), 80)}\n"
+                    f"{_clip_text(hit.get('summary', ''), 220)}"
+                )
+
+        full_text = "\n\n".join(part for part in parts if part)
         if len(full_text) > max_chars:
             full_text = full_text[:max_chars] + "..."
         return full_text
