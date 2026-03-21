@@ -15,6 +15,12 @@
   "build": {
     "appId": "com.asta.ai",
     "productName": "Asta Neural",
+    "asar": true,
+    "asarUnpack": [
+      "terminal_server.js",
+      "node_modules/ws/**/*",
+      "node_modules/tree-kill/**/*"
+    ],
     "directories": {
       "output": "dist_electron"
     },
@@ -22,9 +28,17 @@
       "dist/**/*",
       "main.js",
       "terminal_server.js",
-      "package.json",
+      "package.json"
+    ],
+    "win": {
+      "target": "portable",
+      "icon": "build/icon.ico",
+      "artifactName": "${productName}_Portable_${version}.${ext}"
+    },
+    "extraResources": [
       {
         "from": "../../",
+        "to": "./",
         "filter": [
           "api.py",
           "config.py",
@@ -34,13 +48,7 @@
           "utils/**/*"
         ]
       }
-    ],
-    "win": {
-      "target": "portable",
-      "icon": "build/icon.ico",
-      "artifactName": "${productName}_Portable_${version}.${ext}"
-    },
-    "extraResources": []
+    ]
   },
   "dependencies": {
     "react": "^19.2.4",

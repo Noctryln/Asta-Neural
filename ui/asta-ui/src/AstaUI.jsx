@@ -5,8 +5,8 @@ const CSS = `
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
   --bg:#f7f6f4; --surface:#fff; --surface2:#f0eeeb; --border:#e5e2dd;
-  --text:#1a1816; --muted:#8c8680; --accent:#d4a96a; --asta:#3d3530;
-  --tag-bg:#edeae5; --r:14px; --rs:8px;
+  --text:#1a1816; --muted:#8c8680; --accent:#d4a96a; --asta:#1a1816;
+  --tag-bg:#edeae5; --r:25px; --rs:8px;
   --shadow:0 2px 16px rgba(0,0,0,0.07);
   --font:'Sora',sans-serif; --mono:'JetBrains Mono',monospace;
   --ease:0.22s cubic-bezier(0.4,0,0.2,1);
@@ -39,6 +39,8 @@ html,body{height:100%;width:100%;overflow:hidden;font-family:var(--font);backgro
 .dm-toggle::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:white;transition:transform .25s cubic-bezier(0.4,0,0.2,1)}
 .dm-toggle.on::after{transform:translateX(18px)}
 .bar-fill{transition:width .6s ease}
+.hide-scrollbar::-webkit-scrollbar { display: none; }
+.hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 `;
 
 const WS_URL  = "ws://localhost:8000/ws/chat";
@@ -79,12 +81,13 @@ export default function AstaUI() {
   const [thought,     setThought]     = useState(null);
   const [selfModel,   setSelfModel]   = useState(null);
   const [memory,      setMemory]      = useState(null);
-  const [panel,       setPanel]       = useState(null); // "thought" | "memory" | "self" | "terminal" | null
-  const [statsVisible, setStatsVisible] = useState(false);
+  const [panel,       setPanel]       = useState(null); // "thought" | "memory" | "self" | "terminal" | "stats" | null
   const [sysStats,    setSysStats]    = useState({ cpu: 0, ram: 0, disk: 0 });
   const [noteVisible, setNoteVisible] = useState(false);
   const [serverReady, setServerReady] = useState(false);
   const [thoughtEnabled, setThoughtEnabled] = useState(true);
+  const [separateThought, setSeparateThought] = useState(true);
+  const [device, setDevice] = useState("cpu");
   const [modelInfo,   setModelInfo]   = useState({ dual_model:false, thought_model:"?", response_model:"?" });
   const [darkMode,    setDarkMode]    = useState(() => localStorage.getItem("asta-dark") === "1");
 
@@ -208,6 +211,8 @@ export default function AstaUI() {
       fetchAll();
       fetch(`${API_URL}/config`).then(r=>r.json()).then(d => {
         setThoughtEnabled(d.internal_thought_enabled ?? true);
+        setSeparateThought(d.separate_thought_model ?? true);
+        setDevice(d.device || "cpu");
         setModelInfo({ dual_model: d.dual_model||false, thought_model: d.thought_model||"?", response_model: d.response_model||"?" });
       }).catch(_=>{});
     }
@@ -238,6 +243,36 @@ export default function AstaUI() {
     } catch(_) {}
   };
 
+  const toggleSeparateThought = async () => {
+    try {
+      setServerReady(false);
+      const d = await (await fetch(`${API_URL}/config/separate_thought`, { method:"POST" })).json();
+      setSeparateThought(d.separate_thought_model);
+      if (window.require) {
+        const { ipcRenderer } = window.require('electron');
+        ipcRenderer.send('restart-backend');
+      }
+    } catch(_) {
+      setServerReady(true);
+    }
+  };
+
+  const toggleDevice = async () => {
+    try {
+      setServerReady(false); // Set to false while reloading model
+      const d = await (await fetch(`${API_URL}/config/device`, { method:"POST" })).json();
+      setDevice(d.device);
+      
+      // Beri tahu Electron untuk RESTART backend secara total
+      if (window.require) {
+        const { ipcRenderer } = window.require('electron');
+        ipcRenderer.send('restart-backend');
+      }
+    } catch(_) {
+      setServerReady(true);
+    }
+  };
+
   const triggerReflect = async () => {
     try {
       await fetch(`${API_URL}/reflect`, { method:"POST" });
@@ -261,18 +296,8 @@ export default function AstaUI() {
       {/* Floating Action Plan Bubble (Fixed Position) */}
       {thought?.note && noteVisible && (
         <div className="note-bubble" style={S.noteBubbleFixed}>
-          <div style={{fontSize:13,fontWeight:800,color:"var(--green)",marginBottom:4,letterSpacing:"0.05em"}}>Decision Directive</div>
+          <div style={{fontSize:13,fontWeight:800,color:"var(--green)",marginBottom:4,letterSpacing:"0.05em"}}>Decision Directive (for Asta)</div>
           {thought.note}
-        </div>
-      )}
-
-      {/* Floating Stats Box */}
-      {statsVisible && (
-        <div style={S.statsBox}>
-          <div style={{fontSize:11,fontWeight:800,color:"var(--accent)",marginBottom:10,letterSpacing:"0.08em",textTransform:"uppercase"}}>System Statistics</div>
-          <StatBar label="CPU" value={sysStats.cpu} color="var(--blue)" />
-          <StatBar label="RAM" value={sysStats.ram} color="var(--purple)" />
-          <StatBar label="DISK" value={sysStats.disk} color="var(--green)" />
         </div>
       )}
 
@@ -294,7 +319,7 @@ export default function AstaUI() {
           </div>
         )}
         <TopBtn active={panel==="terminal"} onClick={()=>togglePanel("terminal")} icon=">_" label="Terminal" />
-        <TopBtn active={statsVisible} onClick={() => setStatsVisible(!statsVisible)} icon="◷" label="Stats" />
+        <TopBtn active={panel==="stats"} onClick={() => togglePanel("stats")} icon="◷" label="Stats" />
         
         <div style={{flex:1}}/>
 
@@ -308,13 +333,30 @@ export default function AstaUI() {
 
         <div style={{display:"flex",alignItems:"center",gap:7}}>
           <span style={{fontSize:11,color:thoughtEnabled?"var(--accent)":"var(--muted)",fontFamily:"var(--mono)",userSelect:"none"}}>
-            {thoughtEnabled ? "⟡ on" : "⟡ off"}
+            {thoughtEnabled ? "⟡ THOUGHT ON" : "⟡ OFF"}
           </span>
-          <button className={`dm-toggle${thoughtEnabled?" on":""}`} onClick={toggleThought} title="Toggle Internal Thought" style={{WebkitAppRegion:"no-drag"}}/>
+          <button className={`dm-toggle${thoughtEnabled?" on":""}`} onClick={toggleThought} title="Toggle Internal Thought Logic" style={{WebkitAppRegion:"no-drag"}}/>
+        </div>
+
+        <div style={{width:1,height:18,background:"var(--border)"}}/>
+
+        <div style={{display:"flex",alignItems:"center",gap:7}}>
+          <span style={{fontSize:11,color:separateThought?"var(--accent)":"var(--muted)",fontFamily:"var(--mono)",userSelect:"none"}}>
+            {separateThought ? "❐ DUAL MODEL" : "❐ SHARED"}
+          </span>
+          <button className={`dm-toggle${separateThought?" on":""}`} onClick={toggleSeparateThought} title="Toggle Separate 3B Thought Model (Saves RAM when OFF, Reloads Model)" style={{WebkitAppRegion:"no-drag"}}/>
+        </div>
+
+        <div style={{width:1,height:18,background:"var(--border)"}}/>
+        <div style={{display:"flex",alignItems:"center",gap:7}}>
+          <span style={{fontSize:11,color:device==="gpu"?"var(--accent)":"var(--muted)",fontFamily:"var(--mono)",userSelect:"none"}}>
+            {device === "gpu" ? "CUDA" : "CPU"}
+          </span>
+          <button className={`dm-toggle${device==="gpu"?" on":""}`} onClick={toggleDevice} title="Toggle CUDA Acceleration (Reloads Model)" style={{WebkitAppRegion:"no-drag"}}/>
         </div>
         <div style={{width:1,height:18,background:"var(--border)"}}/>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <span style={{fontSize:12,color:"var(--muted)",fontFamily:"var(--mono)",userSelect:"none"}}>{darkMode?"☾":"○"}</span>
+          <span style={{fontSize:15,color:"var(--muted)",fontFamily:"var(--mono)",userSelect:"none"}}>{darkMode?"☾":"☀"}</span>
           <button className={`dm-toggle${darkMode?" on":""}`} onClick={()=>setDarkMode(p=>!p)} title="Dark mode" style={{WebkitAppRegion:"no-drag"}}/>
         </div>
       </div>
@@ -345,7 +387,7 @@ export default function AstaUI() {
             <div style={S.hRight}>
               <AstaEmoBadge asta={astaEmotion} emo={emoAsta} />
               <UserEmoBadge user={userEmotion} emo={emoUser} />
-              <button onClick={()=>fetch(`${API_URL}/save`,{method:"POST"}).then(fetchAll)} style={S.saveBtn}>↓</button>
+              <button onClick={()=>fetch(`${API_URL}/save`,{method:"POST"}).then(fetchAll)} style={S.saveBtn}>+</button>
             </div>
           </div>
 
@@ -354,7 +396,7 @@ export default function AstaUI() {
               <div style={S.empty}>
                 <div style={{fontSize:44,marginBottom:14,animation:"pulse 3s ease infinite"}}>{emoAsta.emoji}</div>
                 <div style={{fontSize:18,fontWeight:500}}>Halo, Aditiya~</div>
-                <div style={{fontSize:14,color:"var(--muted)",marginTop:5}}>Asta siap ngobrol denganmu.</div>
+                <div style={{fontSize:14,color:"var(--text)",marginTop:5}}>Asta siap ngobrol denganmu.</div>
               </div>
             )}
             {messages.map(m => <Bubble key={m.id} msg={m} isStreaming={streaming && m.id===msgIdRef.current} />)}
@@ -374,7 +416,7 @@ export default function AstaUI() {
                 disabled={!connected||thinking||streaming}
               />
               <button onClick={send} disabled={!connected||thinking||streaming||!input.trim()}
-                style={{...S.sendBtn,opacity:(!connected||thinking||streaming||!input.trim())?0.4:1}}>↑</button>
+                style={{...S.sendBtn,opacity:(!connected||thinking||streaming||!input.trim())?0.6:1}}>↑</button>
             </div>
             <div style={S.hint}>Enter kirim · Shift+Enter baris baru</div>
           </div>
@@ -389,6 +431,15 @@ export default function AstaUI() {
         <SidePanel visible={panel==="terminal"} side="right" title="Terminal" icon=">_" width={450} noPadding={true}>
           <TerminalPanel visible={panel==="terminal"} onMessage={handleTerminalMessage} />
         </SidePanel>
+
+        {/* Stats panel */}
+        <SidePanel visible={panel==="stats"} side="right" title="System Stats" icon="◷" width={200}>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <StatBar label="CPU" value={sysStats.cpu} color="var(--blue)" />
+            <StatBar label="RAM" value={sysStats.ram} color="var(--purple)" />
+            <StatBar label="DISK" value={sysStats.disk} color="var(--green)" />
+          </div>
+        </SidePanel>
       </div>
     </div>
   );
@@ -397,7 +448,7 @@ export default function AstaUI() {
 // ── Terminal Component ────────────────────────────────────────────────────────
 
 function TerminalPanel({ visible, onMessage }) {
-  const [lines, setLines] = useState(["Asta Terminal Ready.", "Type 'help' for info.", "Commands: start backend, stop backend, cls", ""]);
+  const [lines, setLines] = useState(["Asta Terminal Ready.", "Type 'help' for info.", "Commands: install, start backend, stop backend, cls, dir", ""]);
   const [input, setInput] = useState("");
   const wsRef = useRef(null);
   const scrollRef = useRef(null);
@@ -419,11 +470,32 @@ function TerminalPanel({ visible, onMessage }) {
         setLines([]);
       } else if (msg.type === "output") {
         setLines(prev => [...prev, msg.data]);
+      } else if (msg.type === "signal") {
+        // Teruskan ke Electron IPC
+        if (window.require) {
+          const { ipcRenderer } = window.require('electron');
+          if (msg.data === 'start-backend') ipcRenderer.send('start-backend');
+          if (msg.data === 'stop-backend') ipcRenderer.send('stop-backend');
+        }
       } else if (msg.type === "stats") {
         if (onMessage) onMessage(msg);
       }
     };
     ws.onclose = () => setLines(prev => [...prev, "[Disconnected]"]);
+
+    // Dengar output backend dari Electron IPC
+    if (window.require) {
+      const { ipcRenderer } = window.require('electron');
+      const outHandler = (e, data) => setLines(prev => [...prev, data]);
+      ipcRenderer.on('backend-out', outHandler);
+      ipcRenderer.on('backend-err', outHandler);
+      return () => {
+        ws.close();
+        ipcRenderer.removeListener('backend-out', outHandler);
+        ipcRenderer.removeListener('backend-err', outHandler);
+      };
+    }
+
     return () => ws.close();
   }, [onMessage]);
 
@@ -444,7 +516,7 @@ function TerminalPanel({ visible, onMessage }) {
       height: "100%", display: "flex", flexDirection: "column", padding: "12px 16px", 
       textAlign: "left", lineHeight: 1.4
     }}>
-      <div style={{ flex: 1, overflowY: "auto", whiteSpace: "pre-wrap", marginBottom: 10 }}>
+      <div className="hide-scrollbar" style={{ flex: 1, overflowY: "auto", overflowX: "auto", whiteSpace: "pre", marginBottom: 10 }}>
         {lines.map((l, i) => <div key={i} style={{ marginBottom: 1 }}>{l}</div>)}
         <div ref={scrollRef} />
       </div>
@@ -468,16 +540,29 @@ function TerminalPanel({ visible, onMessage }) {
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function Avatar({ emoAsta }) {
+  const isSymbol = emoAsta.emoji === "*";
   return (
-    <div style={{position:"relative",marginRight:10}}>
+    <div style={{position:"relative",marginRight:12}}>
       <div style={{
-        width:45,height:45,borderRadius:"50%",
-        background:`linear-gradient(135deg,${emoAsta.color}33,${emoAsta.color}11)`,
-        border:`1.5px solid ${emoAsta.color}55`,
+        width:46,height:46,borderRadius:12,
+        background:`linear-gradient(135deg,${emoAsta.color}22,${emoAsta.color}08)`,
+        border:`1px solid ${emoAsta.color}25`,
         display:"flex",alignItems:"center",justifyContent:"center",
-        fontSize:22,lineHeight:1,transition:"all .4s",
-      }}>{emoAsta.emoji}</div>
-      <div style={{position:"absolute",bottom:1,right:1,width:10,height:10,borderRadius:"50%",background:"#2e7d57",border:"2px solid var(--bg)"}}/>
+        fontSize:isSymbol ? 32 : 24,
+        transition:"all .4s",
+        overflow:"hidden"
+      }}>
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          transform: isSymbol ? "translateY(6px)" : "none",
+          color: emoAsta.color,
+          lineHeight: 0
+        }}>
+          {emoAsta.emoji}
+        </div>
+      </div>
     </div>
   );
 }
@@ -499,10 +584,10 @@ function StatBar({ label, value, color }) {
 function AstaEmoBadge({ asta, emo }) {
   const pct = Math.round(((asta.mood_score||0)+1)/2*100);
   return (
-    <div style={{display:"flex",alignItems:"center",gap:6,padding:"4px 10px",borderRadius:99,background:`${emo.color}14`,border:`1px solid ${emo.color}30`,fontSize:11,fontFamily:"var(--mono)",color:emo.color,transition:"all .4s"}} title={`Mood: ${asta.mood} | Affection: ${(asta.affection_level||0.7).toFixed(2)}`}>
+    <div style={{display:"flex",alignItems:"center",gap:6,padding:"4px 10px",textTransform:"capitalize",borderRadius:99,background:`${emo.color}14`,border:`1px solid ${emo.color}30`,fontSize:11,fontFamily:"var(--mono)",color:emo.color,transition:"all .4s"}} title={`Mood: ${asta.mood} | Affection: ${(asta.affection_level||0.7).toFixed(2)}`}>
       <span style={{fontSize:14}}>{emo.emoji}</span>
       <span>{emo.label}</span>
-      <div style={{width:32,height:3,background:"var(--border)",borderRadius:99,overflow:"hidden"}}>
+      <div style={{width:32,height:5,background:"var(--border)",borderRadius:99,overflow:"hidden"}}>
         <div className="bar-fill" style={{height:"100%",width:`${pct}%`,background:emo.color,borderRadius:99}}/>
       </div>
     </div>
@@ -511,7 +596,7 @@ function AstaEmoBadge({ asta, emo }) {
 
 function UserEmoBadge({ user, emo }) {
   return (
-    <div style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",borderRadius:99,background:"var(--surface2)",border:"1px solid var(--border)",fontSize:11,fontFamily:"var(--mono)",color:"var(--muted)"}} title="Emosi user">
+    <div style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",textTransform:"capitalize",borderRadius:99,background:"var(--surface2)",border:"1px solid var(--border)",fontSize:11,fontFamily:"var(--mono)",color:"var(--muted)"}} title="Emosi user">
       <span style={{color:emo.color}}>{emo.emoji}</span>
       <span>{user.user_emotion}</span>
     </div>
@@ -835,12 +920,12 @@ const S = {
   hSub:      { fontSize:12,textAlign:"left",color:"var(--muted)",marginTop:1,fontFamily:"var(--mono)",lineHeight:1.3 },
   hRight:    { display:"flex",alignItems:"center",gap:10 },
   msgList:   { flex:1,overflowY:"auto",padding:"24px 32px",display:"flex",flexDirection:"column",gap:4,minHeight:0 },
-  noteBubbleFixed: { position:"absolute",left:395,top:8,width:320,padding:"14px 18px",background:"var(--surface)",border:"1.5px solid var(--green)",borderRadius:"16px",boxShadow:"0 10px 40px rgba(0,0,0,0.15)",zIndex:1000,fontSize:12,lineHeight:1.55,color:"var(--text)",fontStyle:"italic",textAlign:"left" },
-  statsBox:  { position:"absolute",right:20,top:65,width:200,padding:"16px",background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"16px",boxShadow:"var(--shadow)",zIndex:1000,animation:"pullOut .3s ease" },
+  noteBubbleFixed: { position:"absolute",left:395,top:32,width:320,padding:"14px 18px",background:"var(--surface)",border:"1.5px solid var(--green)",borderRadius:"16px",boxShadow:"0 10px 40px rgba(0,0,0,0.15)",zIndex:1000,fontSize:12,lineHeight:1.55,color:"var(--text)",fontStyle:"italic",textAlign:"left" },
+  statsBox:  { position:"absolute",right:20,top:80,width:200,padding:"16px",background:"var(--surface)",border:"1px solid var(--border)",borderRadius:"16px",boxShadow:"var(--shadow)",zIndex:1000,animation:"pullOut .3s ease" },
   empty:     { display:"flex",flex:1,flexDirection:"column",alignItems:"center",justifyContent:"center",opacity:0.55,animation:"fadeIn .6s ease" },
-  inputWrap: { padding:"14px 24px 18px",flexShrink:0,borderTop:"1px solid var(--border)",background:"var(--surface)" },
+  inputWrap: { padding:"14px 24px 18px",flexShrink:0,background:"var(--bg)" },
   inputRow:  { display:"flex",gap:12,alignItems:"flex-end" },
-  textarea:  { flex:1,resize:"none",padding:"12px 16px",borderRadius:"var(--r)",border:"1.5px solid var(--border)",background:"var(--surface2)",fontSize:15,fontFamily:"var(--font)",color:"var(--text)",lineHeight:1.6,outline:"none",maxHeight:140,overflowY:"auto" },
+  textarea:  { flex:1,resize:"none",padding:"12px 16px",borderRadius:"var(--r)",border:"1.5px solid var(--surface)",background:"var(--surface)",fontSize:15,fontFamily:"var(--font)",color:"var(--text)",lineHeight:1.6,outline:"none",maxHeight:140,overflowY:"auto" },
   sendBtn:   { width:50,height:50,borderRadius:"50%",background:"var(--asta)",color:"#f5f0eb",border:"none",fontSize:18,cursor:"pointer",transition:"all var(--ease)",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:600 },
   hint:      { fontSize:11,color:"var(--muted)",marginTop:7,fontFamily:"var(--mono)" },
   saveBtn:   { width:36,height:36,borderRadius:"50%",background:"transparent",border:"1px solid var(--border)",color:"var(--muted)",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" },

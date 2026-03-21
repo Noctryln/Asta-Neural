@@ -68,21 +68,83 @@ ipcMain.on('theme-changed', (event, mode) => {
 });
 
 function startTerminalServer() {
-  terminalServer = fork(path.join(__dirname, 'terminal_server.js'), [ROOT_DIR], {
+  const terminalPath = isDev 
+    ? path.join(__dirname, 'terminal_server.js')
+    : path.join(process.resourcesPath, 'app.asar.unpacked', 'terminal_server.js');
+    
+  console.log(`[Main] Starting terminal from: ${terminalPath}`);
+  
+  terminalServer = fork(terminalPath, [ROOT_DIR], {
     env: { ...process.env, ROOT_DIR }
   });
 }
 
 function startBackend() {
-  const venvPath = path.join(ROOT_DIR, 'venv', 'Scripts', 'activate.bat');
-  if (!fs.existsSync(venvPath)) return;
+  if (backendProcess) return;
 
-  const runCmd = `"${venvPath}" && uvicorn api:app --host 0.0.0.0 --port 8000`;
-  backendProcess = spawn('cmd.exe', ['/c', runCmd], {
+  const pythonPath = path.join(ROOT_DIR, 'venv', 'Scripts', 'python.exe');
+
+  if (!fs.existsSync(pythonPath)) {
+    console.error("Backend failed: Python executable not found at", pythonPath);
+    return;
+  }
+
+  // Tambahkan --reload jika ingin auto-restart, tapi uvicorn --reload akan buat sub-proses baru
+  const args = ['-m', 'uvicorn', 'api:app', '--host', '0.0.0.0', '--port', '8000'];
+
+  backendProcess = spawn(pythonPath, args, {
     cwd: ROOT_DIR,
-    shell: true
+    shell: false,
+    env: { ...process.env, PYTHONUNBUFFERED: "1" }
+  });
+
+  backendProcess.stdout.on('data', (data) => {
+    const msg = data.toString();
+    console.log(`[Backend] ${msg}`);
+    // Kirim ke Terminal via IPC jika ada jendela terbuka
+    if (mainWindow) {
+        mainWindow.webContents.send('backend-out', msg);
+    }
+  });
+
+  backendProcess.stderr.on('data', (data) => {
+    const msg = data.toString();
+    console.error(`[Backend] ${msg}`);
+    if (mainWindow) {
+        mainWindow.webContents.send('backend-err', msg);
+    }
+  });
+
+  backendProcess.on('close', (code) => {
+    console.log(`Backend process closed with code ${code}`);
+    backendProcess = null;
+    if (mainWindow) {
+        mainWindow.webContents.send('backend-status', 'stopped');
+    }
   });
 }
+
+function stopBackend() {
+    if (backendProcess && backendProcess.pid) {
+        kill(backendProcess.pid, 'SIGKILL');
+        backendProcess = null;
+    }
+}
+
+ipcMain.on('start-backend', () => startBackend());
+ipcMain.on('stop-backend', () => stopBackend());
+ipcMain.on('restart-backend', () => {
+    console.log("[Main] Restarting backend for device/config change...");
+    stopBackend();
+    // Beri jeda 1.5 detik agar port 8000 benar-benar lepas dan VRAM/RAM bersih
+    setTimeout(() => {
+        startBackend();
+    }, 1500);
+});
+
+ipcMain.on('theme-changed', (event, mode) => {
+  updateTitleBar(mode === 'dark');
+});
 
 function killProcesses() {
     if (backendProcess && backendProcess.pid) {
@@ -97,7 +159,6 @@ function killProcesses() {
 
 app.whenReady().then(() => {
   startTerminalServer();
-  startBackend();
   createWindow();
 
   nativeTheme.on('updated', () => {
