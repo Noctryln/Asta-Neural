@@ -34,18 +34,14 @@ html,body{height:100%;width:100%;overflow:hidden;font-family:var(--font);backgro
 .note-bubble{animation:popIn .3s cubic-bezier(0.4,0,0.2,1) forwards;transform-origin:left center;}
 .note-bubble::after{content:'';position:absolute;left:-7px;top:14px;width:12px;height:12px;background:var(--surface);border-left:1.5px solid var(--green);border-bottom:1.5px solid var(--green);transform:rotate(45deg);z-index:1}
 
-/* Toggle base */
 .dm-toggle{
   position:relative;width:40px;height:22px;
   background:var(--border);border-radius:99px;
   cursor:pointer;border:none;
   transition:background .25s;flex-shrink:0;
 }
-/* ON states — accent (default) */
 .dm-toggle.is-on { background:var(--accent); }
-/* ON state — purple variant */
 .dm-toggle.is-on-purple { background:var(--purple); }
-/* Thumb */
 .dm-toggle::after{
   content:'';position:absolute;top:3px;left:3px;
   width:16px;height:16px;border-radius:50%;background:white;
@@ -58,6 +54,21 @@ html,body{height:100%;width:100%;overflow:hidden;font-family:var(--font);backgro
 .hide-scrollbar::-webkit-scrollbar{display:none}
 .hide-scrollbar{-ms-overflow-style:none;scrollbar-width:none}
 .long-think-badge{animation:longThinkPulse 2s ease-in-out infinite}
+
+/* FIX #4: Markdown styles inside chat bubble */
+.msg-body { line-height: 1.65; }
+.msg-body strong { font-weight: 600; }
+.msg-body em { font-style: italic; }
+.msg-body code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  background: rgba(0,0,0,0.08);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+html.dark .msg-body code { background: rgba(255,255,255,0.1); }
+.msg-body .msg-line { display: block; min-height: 1em; }
+.msg-body .msg-line + .msg-line { margin-top: 4px; }
 `;
 
 const WS_URL  = "ws://localhost:8000/ws/chat";
@@ -86,6 +97,42 @@ if (!document.getElementById("asta-css")) {
   document.head.appendChild(t);
 }
 
+// ── FIX #4: Inline markdown renderer ─────────────────────────────────────────
+// Renders **bold**, *italic*, `code` within a single line segment.
+function renderInline(text) {
+  const parts = [];
+  // Split on **bold**, *italic*, `code`
+  const re = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`)/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    if (m[0].startsWith("**"))      parts.push(<strong key={m.index}>{m[2]}</strong>);
+    else if (m[0].startsWith("*"))  parts.push(<em key={m.index}>{m[3]}</em>);
+    else if (m[0].startsWith("`"))  parts.push(<code key={m.index}>{m[4]}</code>);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
+
+// FIX #4: Full message renderer — splits by newline, renders each line with inline markdown.
+// Also strips leading "Asta:" prefix that might slip through.
+function MessageContent({ content }) {
+  // Strip residual "Asta:" / "**Asta:**" prefix
+  const clean = content.replace(/^\*{0,2}Asta\*{0,2}\s*:\s*/i, "").trimStart();
+  const lines = clean.split("\n");
+  return (
+    <div className="msg-body">
+      {lines.map((line, i) => (
+        <span key={i} className="msg-line">
+          {renderInline(line)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export default function AstaUI() {
   const [messages,        setMessages]        = useState([]);
   const [input,           setInput]           = useState("");
@@ -102,7 +149,6 @@ export default function AstaUI() {
   const [noteVisible,     setNoteVisible]     = useState(false);
   const [serverReady,     setServerReady]     = useState(false);
 
-  // Config toggles
   const [thoughtEnabled,  setThoughtEnabled]  = useState(true);
   const [separateThought, setSeparateThought] = useState(false);
   const [longThinking,    setLongThinking]    = useState(false);
@@ -300,7 +346,6 @@ export default function AstaUI() {
 
   return (
     <div style={S.root}>
-      {/* Note bubble */}
       {thought?.note && noteVisible && (
         <div className="note-bubble" style={S.noteBubbleFixed}>
           <div style={{fontSize:13,fontWeight:800,color:"var(--green)",marginBottom:4,letterSpacing:"0.05em"}}>
@@ -318,7 +363,6 @@ export default function AstaUI() {
         </div>
       )}
 
-      {/* Top bar */}
       <div style={S.topBar}>
         <TopBtn active={panel==="thought"}  onClick={()=>togglePanel("thought")}  icon="⟡"  label="Thought"  />
         <TopBtn active={panel==="self"}     onClick={()=>togglePanel("self")}     icon="◉"  label="Asta"     />
@@ -334,15 +378,12 @@ export default function AstaUI() {
         )}
         <TopBtn active={panel==="terminal"} onClick={()=>togglePanel("terminal")} icon=">_" label="Terminal" />
         <TopBtn active={panel==="stats"}    onClick={()=>togglePanel("stats")}    icon="◷"  label="Stats"    />
-
         <div style={{flex:1}}/>
 
-        {/* Long Thinking toggle — disabled visual jika thought off */}
         <div style={{display:"flex",alignItems:"center",gap:7,opacity:thoughtEnabled?1:0.35,transition:"opacity .2s"}}>
           <span style={{fontSize:11,color:longThinking?"var(--purple)":"var(--muted)",fontFamily:"var(--mono)",userSelect:"none"}}>
             {longThinking ? "✦ LONG THINK" : "✦ THINK"}
           </span>
-          {/* ← FIX: gunakan class terpisah is-on / is-on-purple, bukan kondisi dalam string */}
           <button
             className={`dm-toggle${longThinking ? " is-on-purple" : ""}`}
             onClick={thoughtEnabled ? toggleLongThinking : undefined}
@@ -350,10 +391,7 @@ export default function AstaUI() {
             style={{WebkitAppRegion:"no-drag",cursor:thoughtEnabled?"pointer":"not-allowed"}}
           />
         </div>
-
         <Divider/>
-
-        {/* Thought toggle */}
         <div style={{display:"flex",alignItems:"center",gap:7}}>
           <span style={{fontSize:11,color:thoughtEnabled?"var(--accent)":"var(--muted)",fontFamily:"var(--mono)",userSelect:"none"}}>
             {thoughtEnabled ? "⟡ THOUGHT ON" : "⟡ OFF"}
@@ -365,10 +403,7 @@ export default function AstaUI() {
             style={{WebkitAppRegion:"no-drag"}}
           />
         </div>
-
         <Divider/>
-
-        {/* Separate thought model toggle */}
         <div style={{display:"flex",alignItems:"center",gap:7}}>
           <span style={{fontSize:11,color:separateThought?"var(--accent)":"var(--muted)",fontFamily:"var(--mono)",userSelect:"none"}}>
             {separateThought ? "❐ DUAL MODEL" : "❐ SHARED"}
@@ -380,10 +415,7 @@ export default function AstaUI() {
             style={{WebkitAppRegion:"no-drag"}}
           />
         </div>
-
         <Divider/>
-
-        {/* Device toggle */}
         <div style={{display:"flex",alignItems:"center",gap:7}}>
           <span style={{fontSize:11,color:device==="gpu"?"var(--accent)":"var(--muted)",fontFamily:"var(--mono)",userSelect:"none"}}>
             {device==="gpu" ? "CUDA" : "CPU"}
@@ -395,10 +427,7 @@ export default function AstaUI() {
             style={{WebkitAppRegion:"no-drag"}}
           />
         </div>
-
         <Divider/>
-
-        {/* Dark mode toggle */}
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontSize:15,color:"var(--muted)",fontFamily:"var(--mono)",userSelect:"none"}}>{darkMode?"☾":"☀"}</span>
           <button
@@ -410,7 +439,6 @@ export default function AstaUI() {
         </div>
       </div>
 
-      {/* Layout */}
       <div style={S.layout}>
         <SidePanel visible={panel==="thought"} side="left"  title="Internal Thought" icon="⟡" width={285}>
           <ThoughtPanel thought={thought} thinking={thinking} modelInfo={modelInfo} />
@@ -419,7 +447,6 @@ export default function AstaUI() {
           <SelfPanel selfModel={selfModel} astaEmotion={astaEmotion} onReflect={triggerReflect} />
         </SidePanel>
 
-        {/* Chat */}
         <div style={S.chatCol}>
           <div style={S.header}>
             <div style={S.hLeft}>
@@ -641,10 +668,24 @@ function Bubble({ msg, isStreaming }) {
             ✦ deep think
           </div>
         )}
-        <div style={{padding:"11px 16px",borderRadius:isUser?"16px 4px 16px 16px":"4px 16px 16px 16px",background:isUser?"var(--asta)":"var(--surface)",color:isUser?"#f5f0eb":"var(--text)",fontSize:13,lineHeight:1.65,boxShadow:"var(--shadow)",border:isUser?"none":"1px solid var(--border)",wordBreak:"break-word",whiteSpace:"pre-wrap",textAlign:"left",width:"100%"}}>
-          {isStreaming&&msg.tokens
+        <div style={{
+          padding:"11px 16px",
+          borderRadius:isUser?"16px 4px 16px 16px":"4px 16px 16px 16px",
+          background:isUser?"var(--asta)":"var(--surface)",
+          color:isUser?"#f5f0eb":"var(--text)",
+          fontSize:13,
+          boxShadow:"var(--shadow)",
+          border:isUser?"none":"1px solid var(--border)",
+          wordBreak:"break-word",
+          textAlign:"left",
+          width:"100%",
+        }}>
+          {/* FIX #4: Gunakan MessageContent untuk rendering markdown */}
+          {isStreaming && msg.tokens
             ? <>{msg.tokens.map(t=><span key={t.id} className="stream-token">{t.text}</span>)}<Cursor/></>
-            : <>{msg.content}{isStreaming&&<Cursor/>}</>
+            : isUser
+              ? <div className="msg-body"><span className="msg-line">{msg.content}</span></div>
+              : <><MessageContent content={msg.content}/>{isStreaming && <Cursor/>}</>
           }
         </div>
       </div>
@@ -718,7 +759,6 @@ function ThoughtPanel({ thought, thinking, modelInfo }) {
 
   const isLong = thought.is_long_thinking;
   const mi     = thought.model_info || modelInfo;
-  // 2-pass: label "P" untuk pass, bukan "S" untuk step di long mode agar tidak membingungkan
   const stepLabel = isLong ? "F" : "S";
 
   const steps = [
@@ -773,7 +813,6 @@ function ThoughtPanel({ thought, thinking, modelInfo }) {
           2-pass thought
         </div>
       )}
-
       {mi.dual_model && (
         <div style={{padding:"6px 9px",borderRadius:"var(--rs)",border:"1px solid var(--border)"}}>
           <div style={S.cardLabel}>Pipeline</div>
@@ -784,7 +823,6 @@ function ThoughtPanel({ thought, thinking, modelInfo }) {
           </div>
         </div>
       )}
-
       {steps.map(step=>(
         <div key={step.num} style={{borderRadius:"var(--rs)",border:`1px solid ${step.color||"var(--border)"}33`,overflow:"hidden"}}>
           <div style={{padding:"5px 10px",background:`${step.color||"var(--accent)"}12`,borderBottom:`1px solid ${step.color||"var(--border)"}18`,fontSize:10.5,fontWeight:700,letterSpacing:"0.08em",color:step.color||"var(--muted)",fontFamily:"var(--mono)",textAlign:"left"}}>
