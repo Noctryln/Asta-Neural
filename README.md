@@ -168,7 +168,7 @@ asta-neural/
 ### 1. Clone & Setup Virtual Environment
 
 ```bash
-git clone https://github.com/username/asta-neural.git
+git clone https://github.com/noctryln/asta-neural.git
 cd asta-neural
 
 # Windows
