@@ -51,7 +51,7 @@ Secara keseluruhan, sistem ini terdiri dari lima lapisan besar yang saling berin
 │  ┌──────────────────────┐    ┌───────────────────────────────┐  │
 │  │  Thought Model       │    │     Response Model            │  │
 │  │  Qwen3-4B-2507.gguf  │───▶│  Qwen3-8B.gguf / Sailor2-8B  │  │
-│  │  Pass 1 + Pass 2     │    │   + LoRA adapter (opsional)   │  │
+│  │  Pass 1 + Pass 2     │    │   + LoRA adapter              │  │
 │  └──────────────────────┘    └───────────────────────────────┘  │
 │                                                                 │
 │  ┌────────────────────────────────────────────────────────────┐ │
