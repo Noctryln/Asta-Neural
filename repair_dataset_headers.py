@@ -2,8 +2,8 @@ import json
 import os
 import re
 
-INPUT_FILE = "data/asta_thought_training_qwen.json"
-OUTPUT_FILE = "data/asta_thought_training_qwen.json"
+INPUT_FILE = "data/asta_thought_training_qwen_v2.json"
+OUTPUT_FILE = "data/asta_thought_training_qwen_v2.json"
 def repair_headers():
     if not os.path.exists(INPUT_FILE):
         print(f"File {INPUT_FILE} tidak ditemukan!")

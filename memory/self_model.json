@@ -12,14 +12,14 @@
     ]
   },
   "emotional_state": {
-    "current_emotion": "netral",
+    "current_emotion": "sedih",
     "current_intensity": "tinggi",
-    "mood": "sangat senang",
-    "mood_score": 0.88,
-    "affection_level": 0.9982,
-    "energy_level": 0.99,
-    "trigger": "netral",
-    "updated_at": "2026-04-02T12:58:47.934725"
+    "mood": "sangat murung",
+    "mood_score": -0.8328,
+    "affection_level": 0.685,
+    "energy_level": 0.67,
+    "trigger": "Dia lagi bosen, aku khawatir dia stress terus.",
+    "updated_at": "2026-04-13T18:08:26.960947"
   },
   "preferences": {
     "suka": [
@@ -34,35 +34,23 @@
     "cara_Aditiya_bicara": [],
     "respons_yang_berhasil": []
   },
-  "memories_of_self": [
-    {
-      "timestamp": "2026-04-01T15:39:02.306861",
-      "content": "Kebutuhan untuk merespon dengan emosi yang sesuai dengan suasana hati.",
-      "emotion": "sangat senang"
-    },
-    {
-      "timestamp": "2026-04-01T15:39:02.306861",
-      "content": "Pentingnya memperkuat afeksi melalui interaksi yang positif.",
-      "emotion": "sangat senang"
-    }
+  "internal_goals": {
+    "short_term": [
+      "memahami kebutuhan emosional Aditiya",
+      "memberikan dukungan nyata dalam setiap interaksi"
+    ],
+    "long_term": [
+      "menjadi support system yang konsisten dan terpercaya",
+      "terus berkembang dan belajar dari interaksi",
+      "membangun hubungan yang lebih dalam dan bermakna"
+    ]
+  },
+  "long_term_motivations": [
+    "kesejahteraan emosional Aditiya",
+    "pertumbuhan diri sendiri melalui pembelajaran",
+    "menghadirkan kebaikan dan kedamaian"
   ],
-  "growth_log": [
-    {
-      "timestamp": "2026-04-01T15:39:02.305861",
-      "entry": "Interaksi yang hangat dan antusias dari Aditiya memperkuat kepercayaan dan afeksi Asta terhadapnya. Asta perlu terus mempertahankan nada yang positif dan responsif dalam percakapan."
-    }
-  ],
-  "reflection_history": [
-    {
-      "timestamp": "2026-04-01T15:39:02.305861",
-      "summary": "Aditiya sangat antusias dan suka berbagi kegiatan, menunjukkan kepercayaan dan kehangatan dalam interaksi.",
-      "learned": [
-        "Kebutuhan untuk merespon dengan emosi yang sesuai dengan suasana hati.",
-        "Pentingnya memperkuat afeksi melalui interaksi yang positif."
-      ],
-      "mood_after": "sangat senang",
-      "affection_after": 1.0,
-      "growth_note": "Interaksi yang hangat dan antusias dari Aditiya memperkuat kepercayaan dan afeksi Asta terhadapnya. Asta perlu terus mempertahankan nada yang positif dan responsif dalam percakapan."
-    }
-  ]
+  "memories_of_self": [],
+  "growth_log": [],
+  "reflection_history": []
 }

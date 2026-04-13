@@ -14,7 +14,6 @@ DEFAULT_CONFIG = {
     "tavily_api_key":           "",
     "serper_api_key":           "",
     "internal_thought_enabled": True,
-    "combined_thought_enabled": True,
     "long_thinking_enabled":    False,
     "long_thinking_max_tokens": 1536,
     "use_dynamic_prompt":       True,

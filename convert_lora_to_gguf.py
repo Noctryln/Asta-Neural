@@ -5,35 +5,37 @@ import torch
 from safetensors.torch import load_file
 import gguf
 import numpy as np
+import re
 
 def get_gguf_name(name):
-    parts = name.split('.')
-    if "layers" not in parts:
-        return None
-    
-    layer_idx = parts[parts.index("layers") + 1]
-    
     mapping = {
-        "q_proj": "attn_q",
-        "k_proj": "attn_k",
-        "v_proj": "attn_v",
-        "o_proj": "attn_output",
+        "q_proj":    "attn_q",
+        "k_proj":    "attn_k",
+        "v_proj":    "attn_v",
+        "o_proj":    "attn_output",
         "gate_proj": "ffn_gate",
-        "up_proj": "ffn_up",
+        "up_proj":   "ffn_up",
         "down_proj": "ffn_down",
     }
-    
-    target_part = None
-    for k, v in mapping.items():
-        if k in parts:
-            target_part = v
-            break
-            
-    if not target_part:
+
+    # Normalisasi prefix PEFT — buang apapun sebelum "layers."
+    # Handles: base_model.model.model.layers.X, model.layers.X, dll
+    match = re.search(r"layers\.(\d+)\.([\w.]+)\.(lora_[AB])\.weight$", name)
+    if not match:
         return None
-        
-    lora_type = "lora_a" if "lora_A" in name else "lora_b"
-    return f"blk.{layer_idx}.{target_part}.weight.{lora_type}"
+
+    layer_idx = match.group(1)
+    module_path = match.group(2) 
+    lora_type = "lora_a" if match.group(3) == "lora_A" else "lora_b"
+
+    # Ambil bagian terakhir dari module_path sebagai proj name
+    proj_name = module_path.split(".")[-1]
+
+    target = mapping.get(proj_name)
+    if not target:
+        return None
+
+    return f"blk.{layer_idx}.{target}.weight.{lora_type}"
 
 def convert_lora(input_path, output_path, alpha=None):
     print(f"[*] Loading adapter from {input_path}")
@@ -60,13 +62,21 @@ def convert_lora(input_path, output_path, alpha=None):
     writer.add_float32("adapter.lora.alpha", float(alpha))
     
     count = 0
+    skipped = []
     for name, tensor in tensors.items():
         new_name = get_gguf_name(name)
         if new_name:
             data = tensor.to(torch.float32).numpy()
             writer.add_tensor(new_name, data)
             count += 1
-            
+        else:
+            skipped.append(name)
+    
+    if skipped:
+        print(f"[!] {len(skipped)} tensor diskip (tidak ada mapping):")
+        for s in skipped:
+            print(f"    - {s}")
+
     print(f"[*] Writing GGUF file to {output_path}...")
     writer.write_header_to_file()
     writer.write_kv_data_to_file()

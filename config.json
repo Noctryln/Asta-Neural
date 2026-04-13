@@ -1,5 +1,5 @@
 {
-  "model_choice": "2",
+  "model_choice": "3",
   "device": "cpu",
   "use_lora": true,
   "lora_n_gpu_layers": 0,
@@ -9,7 +9,6 @@
   "tavily_api_key": "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",
   "serper_api_key": "",
   "internal_thought_enabled": true,
-  "combined_thought_enabled": true,
   "long_thinking_enabled": false,
   "long_thinking_max_tokens": 1536,
   "use_dynamic_prompt": true,

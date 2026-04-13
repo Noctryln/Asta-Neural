@@ -47,6 +47,77 @@ def _is_zero_embedding(embedding: list) -> bool:
         return True
     return np.allclose(np.array(embedding[:10]), 0.0)
 
+_CORE_FACT_TRIGGERS = re.compile(
+    r"\b("
+    # Identitas
+    r"namaku|nama aku|panggilku|panggil aku|"
+    # Pekerjaan & pendidikan
+    r"aku kerja|aku lagi kerja|mulai kerja|keterima|diterima kerja|"
+    r"aku kuliah|masuk kuliah|aku lulus|aku wisuda|aku resign|aku dipecat|"
+    r"aku pindah (kerja|kantor|kampus)|ganti (kerja|kerjaan)|"
+    # Domisili
+    r"aku tinggal|aku pindah (ke|rumah)|aku ngekos|aku kontrak|"
+    # Status relasi
+    r"kita (resmi|jadian|putus|balikan|tunangan|nikah)|"
+    r"aku (tunangan|menikah|cerai|jomblo lagi)|"
+    # Perubahan preferensi yang kuat
+    r"aku (benci|gak tahan|alergi|trauma) \w+|"
+    r"ternyata aku (suka|gak suka|benci) banget|"
+    r"aku udah gak suka|aku berhenti suka|"
+    # Komitmen & rencana besar
+    r"kita (mau|bakal|rencananya) \w+ (tahun|bulan|minggu) depan|"
+    r"janji kita|rencana kita yang|kita sepakat|"
+    # Kondisi kesehatan penting
+    r"aku (didiagnosis|divonis|sakit parah|operasi)|"
+    r"aku (diabetes|hipertensi|alergi) \w+|"
+    # Explicit memory request
+    r"catat (ya|nih|ini)|inget (ya|nih|ini)|"
+    r"ini penting|jangan lupa (ya|nih)|"
+    r"aku mau kasih tau sesuatu yang penting"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# Scoring tambahan — kalau score >= 2 maka trigger update
+def _score_core_importance(session_text: str) -> int:
+    score = 0
+    
+    # Kata sinyal perubahan hidup besar
+    life_change = re.compile(
+        r"\b(pertama kali|baru aja|baru saja|mulai sekarang|"
+        r"dari sekarang|resmi|akhirnya|ternyata|setelah lama)\b",
+        re.IGNORECASE,
+    )
+    if life_change.search(session_text):
+        score += 1
+    
+    # Kata yang menunjukkan permanensi
+    permanent = re.compile(
+        r"\b(selamanya|selalu|untuk seterusnya|dari dulu|"
+        r"udah lama|sudah lama|konsisten|tetap)\b",
+        re.IGNORECASE,
+    )
+    if permanent.search(session_text):
+        score += 1
+    
+    # Topik yang spesifik dan teridentifikasi
+    specific_topic = re.compile(
+        r"\b(nama|pekerjaan|kerjaan|kuliah|kampus|kantor|"
+        r"rumah|alamat|kota|pacar|hubungan|status)\b",
+        re.IGNORECASE,
+    )
+    if specific_topic.search(session_text):
+        score += 1
+    
+    # Explicit memory request selalu dapat score tinggi
+    explicit = re.compile(
+        r"\b(catat|inget|ingat|jangan lupa|penting banget)\b",
+        re.IGNORECASE,
+    )
+    if explicit.search(session_text):
+        score += 3  # langsung trigger
+    
+    return score
 
 # Key Facts Extractor
 _FACT_PATTERNS = [
@@ -56,6 +127,13 @@ _FACT_PATTERNS = [
     (r"\b(besok|minggu depan|nanti)\s+(kita|aku)\s+\w+.{0,40}", "rencana"),
     (r"\bkita\s+(ke|di)\s+(jepang|bali|jakarta|bandung|surabaya|pantai|gunung)\b.{0,25}", "lokasi"),
     (r"\baku\s+(tinggal|kerja|kuliah)\s+di\s+\w+", "identitas"),
+    (r"\bjanji\s+.{4,50}", "janji"),
+    (r"\bkado\s+.{4,40}", "hadiah"),
+    (r"\b(ulang tahun|ultah)\s+.{0,30}", "event"),
+    (r"\bnama\s+\w+\s+(adalah|itu|tuh)\s+\w+", "nama"),
+    (r"\b(takut|benci|trauma)\s+(sama|dengan|soal)\s+.{4,40}", "ketakutan"),
+    (r"\b(lagi|sedang)\s+(sakit|demam|flu|stress|sedih|nangis)\b.{0,30}", "kondisi"),
+    (r"\bkita\s+(pernah|sudah|udah)\s+.{4,50}", "kenangan"),
 ]
 
 _NOISE_RE = re.compile(r"^\s*\*\w+\*\s*$|[*]{2,}")
@@ -268,6 +346,7 @@ class EpisodicMemory(BaseMemory):
             return
 
         embedding = create_embedding(text_conv).tolist()
+        summary_embedding = create_embedding(final_summary).tolist() if final_summary else embedding
         key_facts = extract_key_facts(conversation)
         final_summary = (llm_summary or "").strip() or _build_fallback_summary(conversation, key_facts)
 
@@ -278,6 +357,7 @@ class EpisodicMemory(BaseMemory):
             "key_facts": key_facts,
             "llm_summary": final_summary,
             "embedding": embedding,
+            "summary_embedding": summary_embedding,
             "salience": salience, 
             "emotional_context": emotion_context or "netral",
             "conversation": [
@@ -291,7 +371,7 @@ class EpisodicMemory(BaseMemory):
         self.save_async()
         print(f"[Episodic] Sesi disimpan. {len(key_facts)} facts, salience={salience:.2f}")
 
-    def search(self, query: str, top_k: int = 3, threshold: float = 0.10) -> list:
+    def search(self, query: str, top_k: int = 3, threshold: float = 0.08) -> list:
         if not self.data:
             return []
 
@@ -342,9 +422,18 @@ class EpisodicMemory(BaseMemory):
             for msg in entry.get("conversation", []):
                 lexical_score += _keyword_overlap_score(msg.get("content", ""), keywords)
 
-            semantic_score = float(np.dot(q_emb, np.array(emb)))
+            semantic_score_full    = float(np.dot(q_emb, np.array(emb)))
+        
+            # Cek summary_embedding jika ada
+            sum_emb = entry.get("summary_embedding", [])
+            if sum_emb and not _is_zero_embedding(sum_emb):
+                semantic_score_summary = float(np.dot(q_emb, np.array(sum_emb)))
+                semantic_score = max(semantic_score_full, semantic_score_summary)
+            else:
+                semantic_score = semantic_score_full
+                
             total_score = lexical_score + max(0.0, semantic_score) * 4.0
-            if lexical_score > 0 or semantic_score >= 0.22:
+            if lexical_score > 0 or semantic_score >= 0.15:
                 scored.append((total_score, entry))
 
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -417,26 +506,54 @@ class CoreMemory(BaseMemory):
     def __init__(self, directory: Path):
         super().__init__(
             directory / "core_memory.json",
-            default_content={"summary": "", "user_profile": {}}
+            default_content={
+                "core_facts": "",       # fakta permanen — jarang berubah
+                "last_session": "",     # ringkasan sesi terakhir — update tiap sesi
+                "user_profile": {},
+            }
         )
-        if "user_profile" not in self.data:
-            self.data["user_profile"] = {}
-            self.save_async()
+        # Migrasi dari schema lama
+        if "summary" in self.data and "core_facts" not in self.data:
+            self.data["core_facts"] = self.data.pop("summary", "")
+            self.data.setdefault("last_session", "")
+            self.save()
+        self.data.setdefault("core_facts", "")
+        self.data.setdefault("last_session", "")
+        self.data.setdefault("user_profile", {})
 
     def get_summary(self) -> str:
-        return self.data.get("summary", "")
+        # Backward compat
+        return self.data.get("core_facts", "")
+
+    def get_core_facts(self) -> str:
+        return self.data.get("core_facts", "")
+
+    def get_last_session(self) -> str:
+        return self.data.get("last_session", "")
 
     def get_profile(self) -> dict:
         return self.data.get("user_profile", {})
 
     def update_summary(self, text: str, async_save: bool = True):
-        if self.data.get("summary") != text:
-            self.data["summary"] = text
-            if async_save:
-                self.save_async()
-            else:
-                self.save()
-            print("[Core Memory] Summary diperbarui.")
+        # Backward compat — update core_facts
+        if self.data.get("core_facts") != text:
+            self.data["core_facts"] = text
+            if async_save: self.save_async()
+            else: self.save()
+            print("[Core Memory] core_facts diperbarui.")
+
+    def update_core_facts(self, text: str, async_save: bool = True):
+        if self.data.get("core_facts") != text:
+            self.data["core_facts"] = text
+            if async_save: self.save_async()
+            else: self.save()
+            print("[Core Memory] core_facts diperbarui.")
+
+    def update_last_session(self, text: str, async_save: bool = True):
+        self.data["last_session"] = text
+        if async_save: self.save_async()
+        else: self.save()
+        print("[Core Memory] last_session diperbarui.")
 
     def add_preference(self, preference: str):
         profile = self.data.setdefault("user_profile", {})
@@ -445,17 +562,22 @@ class CoreMemory(BaseMemory):
             prefs.append(preference)
             profile["preferensi"] = prefs[-20:]
             self.save_async()
-            print(f"[Core Memory] Preferensi: {preference}")
 
     def get_context_text(self) -> str:
         parts = []
 
-        summary = self.get_summary()
-        if summary:
-            clean = re.sub(r'\(Keterangan[^)]*\)', '', summary)
+        core_facts = self.get_core_facts()
+        if core_facts:
+            clean = re.sub(r'\(Keterangan[^)]*\)', '', core_facts)
             clean = re.sub(r'\s+', ' ', clean).strip()
             if clean:
-                parts.append(clean[:300])
+                parts.append(f"[Fakta Inti Adit]\n{clean[:500]}")
+
+        last_session = self.get_last_session()
+        if last_session:
+            clean = re.sub(r'\s+', ' ', last_session).strip()
+            if clean:
+                parts.append(f"[Sesi Terakhir]\n{clean[:300]}")
 
         profile = self.get_profile()
         if profile:
@@ -466,7 +588,7 @@ class CoreMemory(BaseMemory):
                 r = profile["rencana"]
                 lines.append("Rencana: " + (", ".join(r[:3]) if isinstance(r, list) else str(r)))
             if lines:
-                parts.append("[Profil Pengguna]\n" + "\n".join(lines))
+                parts.append("[Profil]\n" + "\n".join(lines))
 
         return "\n\n".join(parts)
 
@@ -493,8 +615,20 @@ class HybridMemory:
     def get_lightweight_hint(self, current_query: str = "") -> str:
         parts = []
 
-        if summary := self.core.get_summary():
-            parts.append(f"[Profil] {summary[:200]}")
+        core_facts = self.core.get_core_facts()
+        if core_facts:
+            parts.append(f"[Profil] {core_facts[:400]}")
+
+        last_session = self.core.get_last_session()
+        if last_session:
+            parts.append(f"[Sesi Terakhir] {last_session[:300]}")
+
+        # Preferensi dari user_profile
+        profile = self.core.get_profile()
+        if profile:
+            prefs = profile.get("preferensi", [])
+            if prefs:
+                parts.append(f"[Suka] {', '.join(prefs[:5])}")
 
         if facts := self.episodic.get_recent_facts_text(n_sessions=1, max_facts=3):
             parts.append(f"[Fakta Baru] {facts}")
@@ -517,30 +651,20 @@ class HybridMemory:
             re.IGNORECASE,
         ))
 
-        focus = recall_topic if recall_topic and recall_topic.strip().lower() not in ("", "kosong", "-") else ""
-        if not focus and memory_intent:
-            focus = current_query
+        # ─── Core memory dan preferensi SELALU masuk ──────────────
+        core_text = self.core.get_context_text()
+        if core_text:
+            parts.append(f"[Memori Inti]\n{core_text}")
 
-        should_include_memory = include_recall or bool(focus)
+        facts_text = self.episodic.get_recent_facts_text(n_sessions=3, max_facts=5)
+        if facts_text:
+            parts.append(f"[Fakta Penting]\n{facts_text}")
 
-        if should_include_memory:
-            core_text = self.core.get_context_text()
-            if core_text:
-                parts.append(f"[Memori Inti]\n{core_text}")
-
-            facts_text = self.episodic.get_recent_facts_text(n_sessions=3, max_facts=5)
-            if facts_text:
-                parts.append(f"[Fakta Penting]\n{facts_text}")
-
-        # RECALL: hanya aktif jika dipicu (include_recall)
+        # ─── Recall hanya kalau diminta ───────────────────────────
         if include_recall:
             focus = ""
-
-            # Prioritas 1: recall_topic valid
             if recall_topic and recall_topic.strip().lower() not in {"", "kosong", "-"}:
                 focus = recall_topic.strip()
-
-            # Prioritas 2: intent kuat → pakai current_query
             elif memory_intent:
                 focus = current_query
 
@@ -550,10 +674,10 @@ class HybridMemory:
                     current_query=current_query,
                     max_chars=max(220, max_chars // 2),
                 )
-
                 if recall_text:
                     parts.append(recall_text)
 
+        # ─── Semantic/web memory ──────────────────────────────────
         if self.semantic and current_query:
             semantic_hits = self.semantic.search(current_query, top_k=1)
             if semantic_hits:
@@ -580,33 +704,75 @@ class HybridMemory:
 
     def update_core_async(self, llm_callable, current_session_text: str):
         def _worker():
-            old_summary = self.core.get_summary()
-            combined = ""
-            if old_summary:
-                clean = re.sub(r'\(Keterangan[^)]*\)', '', old_summary).strip()
-                combined += f"Ringkasan sebelumnya:\n{clean[:400]}\n\n"
-            combined += f"Percakapan terbaru:\n{current_session_text[:800]}"
-
-            prompt = (
-                "Berdasarkan ringkasan sebelumnya dan percakapan terbaru, "
-                "buat satu paragraf ringkas (maks 100 kata) tentang fakta penting pengguna. "
-                "Fokus: nama, preferensi, rencana konkret, hubungan dengan Asta. "
-                "Bahasa Indonesia. JANGAN tambahkan keterangan atau catatan.\n\n"
-                f"{combined}\n\nRingkasan:"
+            # ─── STEP 1: Selalu update last_session ───────────────────
+            session_prompt = (
+                "Buat ringkasan singkat (maks 60 kata) percakapan berikut. "
+                "Fokus: topik yang dibahas, mood Adit, dan hal penting yang terjadi. "
+                "Bahasa Indonesia casual. JANGAN tambahkan keterangan atau catatan.\n\n"
+                f"Percakapan:\n{current_session_text[:600]}\n\nRingkasan:"
             )
             try:
                 result = llm_callable(
-                    prompt=prompt,
-                    max_tokens=150,
+                    prompt=session_prompt,
+                    max_tokens=90,
                     temperature=0.1,
                     stop=["\n\n", "###", "(Keterangan"],
                 )
-                summary = result["choices"][0]["text"].strip()
-                if summary:
-                    self.core.update_summary(summary, async_save=True)
-                    print("[Core Memory] Background update selesai.")
+                session_summary = result["choices"][0]["text"].strip()
+                if session_summary:
+                    self.core.update_last_session(session_summary, async_save=False)
+                    print("[Core Memory] last_session diperbarui.")
             except Exception as e:
-                print(f"[Core Memory] Background update gagal: {e}")
+                print(f"[Core Memory] last_session update gagal: {e}")
+
+            # ─── STEP 2: Cek apakah core_facts perlu diupdate ─────────
+            has_trigger  = bool(_CORE_FACT_TRIGGERS.search(current_session_text))
+            score        = _score_core_importance(current_session_text)
+
+            if not has_trigger and score < 2:
+                print(f"[Core Memory] Score={score}, tidak ada trigger — core_facts tidak diubah.")
+                return
+
+            print(f"[Core Memory] Trigger detected (regex={has_trigger}, score={score}) — update core_facts.")
+
+            # ─── STEP 3: Update core_facts ────────────────────────────
+            old_facts = self.core.get_core_facts()
+            combined  = ""
+            if old_facts:
+                clean = re.sub(r'\(Keterangan[^)]*\)', '', old_facts).strip()
+                combined += f"Fakta yang sudah diketahui:\n{clean[:400]}\n\n"
+            combined += f"Percakapan terbaru:\n{current_session_text[:600]}"
+
+            facts_prompt = (
+                "Berdasarkan fakta yang sudah diketahui dan percakapan terbaru, "
+                "perbarui fakta penting tentang Aditiya (maks 80 kata). "
+                "Hanya tulis fakta yang PERMANEN atau PENTING JANGKA PANJANG: "
+                "nama, pekerjaan, hobi, preferensi tetap, rencana besar, hubungan dengan Asta. "
+                "JANGAN masukkan hal yang bersifat sementara atau mood sesaat. "
+                "Bahasa Indonesia. JANGAN tambahkan keterangan atau catatan.\n\n"
+                f"{combined}\n\nFakta:"
+            )
+            try:
+                result = llm_callable(
+                    prompt=facts_prompt,
+                    max_tokens=120,
+                    temperature=0.1,
+                    stop=["\n\n", "###", "(Keterangan"],
+                )
+                new_facts = result["choices"][0]["text"].strip()
+                if new_facts:
+                    self.core.update_core_facts(new_facts, async_save=True)
+                    print("[Core Memory] core_facts diperbarui.")
+            except Exception as e:
+                print(f"[Core Memory] core_facts update gagal: {e}")
+
+            # ─── STEP 4: Update preferensi dari sesi ini ──────────────
+            try:
+                self.extract_and_save_preferences(
+                    [{"role": "user", "content": current_session_text}]
+                )
+            except Exception as e:
+                print(f"[Core Memory] Preferensi update gagal: {e}")
 
         thread = threading.Thread(target=_worker, daemon=False)
         thread.start()

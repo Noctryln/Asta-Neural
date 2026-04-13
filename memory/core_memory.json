@@ -1,4 +1,12 @@
 {
-  "summary": "Pengguna, Adit, menunjukkan preferensi untuk masakan sederhana dan lezat, berencana memasak bersama Asta, dengan fokus pada Tumis Buncis Udang. Hubungan mereka melibatkan kolaborasi memasak, dengan Asta mengambil peran dalam membuat bumbu, sementara Adit berkontribusi dengan sentuhan pribadi, menambahkan \"cinta\" ke hidangan. **Nama: Adit, Preferensi: Masakan sederhana dan lezat, Rencana: Tumis Buncis Udang, Hubungan: Kolaborasi memasak dengan Asta**. **",
-  "user_profile": {}
+  "core_facts": "",
+  "last_session": "",
+  "user_profile": {
+    "preferensi": [
+      ""
+    ],
+    "rencana": [
+      ""
+    ]
+  }
 }

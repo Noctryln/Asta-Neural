@@ -1,8 +1,8 @@
 import json
 import os
 
-INPUT_FILE = "data/asta_thought_dataset.json"
-OUTPUT_FILE = "data/asta_thought_training_qwen.json"
+INPUT_FILE = "data/response_v4.json"
+OUTPUT_FILE = "data/response_train_v4.json"
 
 def format_qwen_chatml(messages):
     """

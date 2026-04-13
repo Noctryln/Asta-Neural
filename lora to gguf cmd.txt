@@ -1,1 +1,1 @@
-python convert_lora_to_gguf.py "adapter/adapter_model.safetensors" "model/LoRA-all-adapter/qwen3_4b_adapter.gguf"
+venv\Scripts\python convert_lora_to_gguf.py "adapter/adapter_model.safetensors" "model/LoRA-all-adapter/model.gguf"
